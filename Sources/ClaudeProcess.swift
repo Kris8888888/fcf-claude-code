@@ -1,0 +1,152 @@
+import Foundation
+
+// 从登录 shell 取一次环境变量：Finder 启动的 App 没有 nvm 的 PATH，FCF 包装脚本要靠它找 node / npm
+enum LoginEnv {
+    private static var cached: [String: String]?
+    private static let lock = NSLock()
+    static var shared: [String: String] {
+        lock.lock(); defer { lock.unlock() }
+        if let cached { return cached }
+        let env = load()
+        cached = env
+        return env
+    }
+    /// FCF / Node 升级后重新读一次登录环境（PATH 可能变了）
+    static func reload() { lock.lock(); cached = nil; lock.unlock(); _ = shared }
+
+    private static func load() -> [String: String] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-lic", "env -0"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        var env = ProcessInfo.processInfo.environment
+        do {
+            try p.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            for chunk in data.split(separator: 0) {
+                guard let s = String(data: Data(chunk), encoding: .utf8), let eq = s.firstIndex(of: "=") else { continue }
+                env[String(s[..<eq])] = String(s[s.index(after: eq)...])
+            }
+        } catch {}
+        // 避免被识别为「在 Claude Code 里套娃启动」
+        for k in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] { env.removeValue(forKey: k) }
+        return env
+    }
+
+    static var claudePath: String {
+        if let custom = UserDefaults.standard.string(forKey: "claudePath"), !custom.isEmpty { return custom }
+        let fcf = NSString(string: "~/.fcf/bin/claude").expandingTildeInPath
+        if FileManager.default.isExecutableFile(atPath: fcf) { return fcf }
+        for dir in (shared["PATH"] ?? "").split(separator: ":") {
+            let c = "\(dir)/claude"
+            if FileManager.default.isExecutableFile(atPath: c) { return c }
+        }
+        return "claude"
+    }
+}
+
+// 一个后台 claude 进程：stream-json 进、stream-json 出
+final class ClaudeProcess {
+    var onEvent: (([String: Any]) -> Void)?
+    var onExit: ((Int32, String) -> Void)?
+
+    private var proc: Process?
+    private var input: FileHandle?
+    private var buffer = Data()
+    private var stderrTail = ""
+    private var stdoutTail = ""   // 非 JSON 的输出（例如 FCF 报错），退出时一起展示
+    private let queue = DispatchQueue(label: "claude.io")
+
+    var isRunning: Bool { proc?.isRunning ?? false }
+    var pid: Int32? { proc?.processIdentifier }
+
+    func start(cwd: String, resume: String?, model: String?, permissionMode: String?, addDirs: [String] = [], extraArgs: [String] = []) throws {
+        var args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json",
+                    "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio"]
+        if let resume { args += ["--resume", resume] }
+        if let model, !model.isEmpty { args += ["--model", model] }
+        if let permissionMode, !permissionMode.isEmpty { args += ["--permission-mode", permissionMode] }
+        for d in addDirs { args += ["--add-dir", d] }
+        args += extraArgs
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: LoginEnv.claudePath)
+        p.arguments = args
+        p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = LoginEnv.shared
+        let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
+        p.standardInput = inPipe
+        p.standardOutput = outPipe
+        p.standardError = errPipe
+
+        outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard !d.isEmpty else { return }
+            self?.queue.async { self?.consume(d) }
+        }
+        errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let d = h.availableData
+            guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
+            self?.queue.async {
+                guard let self else { return }
+                self.stderrTail = String((self.stderrTail + s).suffix(4000))
+            }
+        }
+        p.terminationHandler = { [weak self] pr in
+            outPipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            self?.queue.async {
+                guard let self else { return }
+                let code = pr.terminationStatus
+                let tail = [Shell.clean(self.stdoutTail), self.stderrTail].filter { !$0.isEmpty }.joined(separator: "\n")
+                DispatchQueue.main.async { self.onExit?(code, tail) }
+            }
+        }
+        try p.run()
+        proc = p
+        input = inPipe.fileHandleForWriting
+    }
+
+    private func consume(_ d: Data) {
+        buffer.append(d)
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let line = buffer.subdata(in: buffer.startIndex..<nl)
+            buffer.removeSubrange(buffer.startIndex...nl)
+            // FCF 会先打印一段横幅，非 JSON 行直接跳过
+            guard line.first == UInt8(ascii: "{"),
+                  let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+                if let s = String(data: line, encoding: .utf8) { stdoutTail = String((stdoutTail + s + "\n").suffix(2000)) }
+                continue
+            }
+            DispatchQueue.main.async { [weak self] in self?.onEvent?(obj) }
+        }
+    }
+
+    func send(_ obj: [String: Any]) {
+        guard let input, var data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        data.append(0x0A)
+        queue.async { try? input.write(contentsOf: data) }
+    }
+
+    /// FCF 包装脚本不会把信号转给真正的 claude，所以要把整棵进程树一起结束
+    func terminate() {
+        try? input?.close()
+        if let p = proc, p.isRunning {
+            let pids = Self.descendants(of: p.processIdentifier)
+            p.terminate()
+            for pid in pids { kill(pid, SIGTERM) }
+        }
+        proc = nil
+        input = nil
+    }
+
+    static func descendants(of pid: Int32) -> [Int32] {
+        let r = Shell.run("/usr/bin/pgrep", ["-P", String(pid)])
+        let kids = r.output.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+        return kids + kids.flatMap { descendants(of: $0) }
+    }
+}
