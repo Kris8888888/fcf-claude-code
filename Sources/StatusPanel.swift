@@ -205,8 +205,8 @@ struct KVRow: View {
     var tint: Color = T.ink
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
-            Text(k).font(.system(size: 13)).foregroundStyle(T.muted).frame(width: 120, alignment: .leading)
-            Text(v).font(.system(size: 13)).foregroundStyle(tint).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(k).font(.system(size: fs(13))).foregroundStyle(T.muted).frame(width: 120, alignment: .leading)
+            Text(v).font(.system(size: fs(13))).foregroundStyle(tint).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(.vertical, 5)
@@ -218,7 +218,7 @@ struct GroupBox2<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(T.ink).padding(.bottom, 4)
+            Text(title).font(.system(size: fs(13), weight: .semibold)).foregroundStyle(T.ink).padding(.bottom, 4)
             content
         }
         .padding(14)
@@ -311,10 +311,10 @@ struct StatusTabView: View {
                     let s = m["status"] as? String ?? ""
                     HStack(spacing: 6) {
                         Image(systemName: s == "connected" ? "checkmark.circle.fill" : s == "needs-auth" ? "key.fill" : s == "pending" ? "clock" : "xmark.circle.fill")
-                            .font(.system(size: 11)).foregroundStyle(s == "connected" ? T.ok : s == "pending" ? T.muted : T.run)
-                        Text(m["name"] as? String ?? "").font(.system(size: 12)).foregroundStyle(T.ink)
+                            .font(.system(size: fs(11))).foregroundStyle(s == "connected" ? T.ok : s == "pending" ? T.muted : T.run)
+                        Text(m["name"] as? String ?? "").font(.system(size: fs(12))).foregroundStyle(T.ink)
                         Text(s == "connected" ? "已连接" : s == "needs-auth" ? "需要授权" : s == "pending" ? "连接中" : "失败")
-                            .font(.system(size: 11)).foregroundStyle(T.muted)
+                            .font(.system(size: fs(11))).foregroundStyle(T.muted)
                     }
                     .padding(.leading, 136)
                 }
@@ -379,9 +379,9 @@ struct UsageTabView: View {
                     ForEach(p.meters) { m in
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
-                                Text(m.label).font(.system(size: 13)).foregroundStyle(T.ink)
+                                Text(m.label).font(.system(size: fs(13))).foregroundStyle(T.ink)
                                 Spacer()
-                                Text("已用 \(m.pct)%").font(.system(size: 13, weight: .medium)).foregroundStyle(m.pct >= 80 ? T.err : T.ink)
+                                Text("已用 \(m.pct)%").font(.system(size: fs(13), weight: .medium)).foregroundStyle(m.pct >= 80 ? T.err : T.ink)
                             }
                             GeometryReader { g in
                                 ZStack(alignment: .leading) {
@@ -390,7 +390,7 @@ struct UsageTabView: View {
                                 }
                             }
                             .frame(height: 6)
-                            if !m.reset.isEmpty { Text("重置时间：" + m.reset).font(.system(size: 11)).foregroundStyle(T.muted) }
+                            if !m.reset.isEmpty { Text("重置时间：" + m.reset).font(.system(size: fs(11))).foregroundStyle(T.muted) }
                         }
                         .padding(.vertical, 6)
                     }
@@ -398,7 +398,7 @@ struct UsageTabView: View {
             }
             if !p.rest.isEmpty {
                 GroupBox2(title: "用量构成（Claude Code 原文）") {
-                    Text(p.rest).font(.system(size: 12, design: .monospaced)).foregroundStyle(T.ink).textSelection(.enabled)
+                    Text(p.rest).font(.system(size: fs(12), design: .monospaced)).foregroundStyle(T.ink).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -424,7 +424,7 @@ struct StatsTabView: View {
                 }
                 if view == 0 { overview(s) } else { models(s) }
                 Text("数据来自 Claude Code 自己的统计缓存（和终端 /stats 同一份），统计到 \(s.computedDate)。")
-                    .font(.system(size: 11)).foregroundStyle(T.muted)
+                    .font(.system(size: fs(11))).foregroundStyle(T.muted)
             }
         } else {
             Text("还没有统计数据：Claude Code 用过一段时间后会生成。").foregroundStyle(T.muted)
@@ -472,7 +472,7 @@ struct StatsTabView: View {
         if range == .all {
             let t = s.modelUsage.values
             Text("输入 \(Fmt.tokens(t.reduce(0) { $0 + $1.input }))，输出 \(Fmt.tokens(t.reduce(0) { $0 + $1.output }))，缓存读取 \(Fmt.tokens(t.reduce(0) { $0 + $1.cacheRead }))，缓存写入 \(Fmt.tokens(t.reduce(0) { $0 + $1.cacheWrite }))")
-                .font(.system(size: 12)).foregroundStyle(T.muted)
+                .font(.system(size: fs(12))).foregroundStyle(T.muted)
         }
     }
 
@@ -515,13 +515,13 @@ struct StatsTabView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Circle().fill(SeriesColor.color(for: m)).frame(width: 8, height: 8)
-                        Text(Fmt.model(m)).font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
-                        Text(String(format: "%.1f%%", Double(n) * 100 / Double(all))).font(.system(size: 12)).foregroundStyle(T.muted)
+                        Text(Fmt.model(m)).font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
+                        Text(String(format: "%.1f%%", Double(n) * 100 / Double(all))).font(.system(size: fs(12))).foregroundStyle(T.muted)
                     }
-                    Text("这段时间 \(Fmt.tokens(n)) tokens").font(.system(size: 12)).foregroundStyle(T.ink)
+                    Text("这段时间 \(Fmt.tokens(n)) tokens").font(.system(size: fs(12))).foregroundStyle(T.ink)
                     if range == .all, let u = s.modelUsage[m] {
-                        Text("输入 \(Fmt.tokens(u.input))，输出 \(Fmt.tokens(u.output))").font(.system(size: 12)).foregroundStyle(T.muted)
-                        Text("缓存读取 \(Fmt.tokens(u.cacheRead))，写入 \(Fmt.tokens(u.cacheWrite))").font(.system(size: 12)).foregroundStyle(T.muted)
+                        Text("输入 \(Fmt.tokens(u.input))，输出 \(Fmt.tokens(u.output))").font(.system(size: fs(12))).foregroundStyle(T.muted)
+                        Text("缓存读取 \(Fmt.tokens(u.cacheRead))，写入 \(Fmt.tokens(u.cacheWrite))").font(.system(size: fs(12))).foregroundStyle(T.muted)
                     }
                 }
                 .padding(12)
@@ -537,8 +537,8 @@ struct Metric: View {
     let value: String
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 12)).foregroundStyle(T.muted)
-            Text(value).font(.system(size: 16, weight: .semibold)).foregroundStyle(T.ink)
+            Text(label).font(.system(size: fs(12))).foregroundStyle(T.muted)
+            Text(value).font(.system(size: fs(16), weight: .semibold)).foregroundStyle(T.ink)
         }
     }
 }
@@ -562,7 +562,7 @@ struct Heatmap: View {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .trailing, spacing: gap) {
                     ForEach(0..<7, id: \.self) { r in
-                        Text(r == 0 ? "一" : r == 2 ? "三" : r == 4 ? "五" : "").font(.system(size: 9)).foregroundStyle(T.muted).frame(height: cell)
+                        Text(r == 0 ? "一" : r == 2 ? "三" : r == 4 ? "五" : "").font(.system(size: fs(9))).foregroundStyle(T.muted).frame(height: cell)
                     }
                 }
                 .padding(.top, 16)
@@ -573,7 +573,7 @@ struct Heatmap: View {
                             let first = cal.component(.day, from: d) <= 7
                             // 月份标签悬浮在格子上方，不占宽度，不会被挤成两行
                             Color.clear.frame(width: cell, height: 12).overlay(alignment: .leading) {
-                                if first { Text("\(cal.component(.month, from: d))月").font(.system(size: 9)).foregroundStyle(T.muted).fixedSize() }
+                                if first { Text("\(cal.component(.month, from: d))月").font(.system(size: fs(9))).foregroundStyle(T.muted).fixedSize() }
                             }
                         }
                     }
@@ -596,11 +596,11 @@ struct Heatmap: View {
                 }
             }
             HStack(spacing: 4) {
-                Text("少").font(.system(size: 10)).foregroundStyle(T.muted)
+                Text("少").font(.system(size: fs(10))).foregroundStyle(T.muted)
                 ForEach(0..<5, id: \.self) { l in
                     RoundedRectangle(cornerRadius: 2.5).fill(l == 0 ? T.line.opacity(0.6) : T.accent.opacity([0, 0.3, 0.52, 0.76, 1][l])).frame(width: cell, height: cell)
                 }
-                Text("多").font(.system(size: 10)).foregroundStyle(T.muted)
+                Text("多").font(.system(size: fs(10))).foregroundStyle(T.muted)
             }
             .padding(.leading, 20)
         }
@@ -617,7 +617,7 @@ struct TokenChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("每天 tokens").font(.system(size: 13, weight: .semibold)).foregroundStyle(T.ink)
+            Text("每天 tokens").font(.system(size: fs(13), weight: .semibold)).foregroundStyle(T.ink)
             Chart {
                 ForEach(points) { p in
                     LineMark(x: .value("日期", p.date, unit: .day), y: .value("tokens", p.tokens))
@@ -636,10 +636,10 @@ struct TokenChart: View {
             .chartForegroundStyleScale(domain: models.map(Fmt.model), range: models.map { SeriesColor.color(for: $0) })
             .chartYAxis { AxisMarks { v in
                 AxisGridLine().foregroundStyle(T.line.opacity(0.6))
-                AxisValueLabel { if let n = v.as(Int.self) { Text(Fmt.tokens(n)).font(.system(size: 10)).foregroundStyle(T.muted) } }
+                AxisValueLabel { if let n = v.as(Int.self) { Text(Fmt.tokens(n)).font(.system(size: fs(10))).foregroundStyle(T.muted) } }
             } }
             .chartXAxis { AxisMarks(values: .automatic(desiredCount: 5)) { v in
-                AxisValueLabel { if let d = v.as(Date.self) { Text(Fmt.md.string(from: d)).font(.system(size: 10)).foregroundStyle(T.muted) } }
+                AxisValueLabel { if let d = v.as(Date.self) { Text(Fmt.md.string(from: d)).font(.system(size: fs(10))).foregroundStyle(T.muted) } }
             } }
             .chartLegend(position: .bottom, alignment: .leading)
             .chartOverlay { proxy in
@@ -665,7 +665,7 @@ struct TokenChart: View {
                     Text("把鼠标移到图上看当天的数值")
                 }
             }
-            .font(.system(size: 12)).foregroundStyle(T.muted)
+            .font(.system(size: fs(12))).foregroundStyle(T.muted)
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 12).fill(T.sunk))

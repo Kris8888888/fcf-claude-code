@@ -209,7 +209,7 @@ final class TerminalBuffer: ObservableObject {
         func run(_ text: String, _ fg: Int?, _ bold: Bool, cursor: Bool = false) {
             var a = AttributedString(text)
             a.foregroundColor = cursor ? Color.black : (fg.map { Self.palette[$0 % 16] } ?? Color(white: 0.88))
-            if bold { a.font = .system(size: 12.5, weight: .bold, design: .monospaced) }
+            if bold { a.font = .system(size: fs(12.5), weight: .bold, design: .monospaced) }
             if cursor { a.backgroundColor = Color(white: 0.85) }
             out += a
         }

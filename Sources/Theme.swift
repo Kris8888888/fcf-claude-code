@@ -81,6 +81,16 @@ final class ThemeStore: ObservableObject {
     @Published private(set) var palette: Palette
     @Published private(set) var accentOverride: UInt32?
     @Published private(set) var revision = 0
+    /// 界面字号比例（设置 → 外观主题 → 字号）
+    @Published private(set) var fontScale: Double = {
+        let v = UserDefaults.standard.double(forKey: "fontScale"); return v > 0 ? v : 1.0
+    }()
+
+    func setFontScale(_ v: Double) {
+        fontScale = v
+        UserDefaults.standard.set(v, forKey: "fontScale")
+        revision += 1      // 整个界面按新字号重建
+    }
     private(set) var colors: Colors
 
     struct Colors {
@@ -165,9 +175,9 @@ enum T {
     static var ok: Color { ThemeStore.shared.colors.ok }
     static var err: Color { ThemeStore.shared.colors.err }
 
-    static let mono = Font.system(size: 12, design: .monospaced)
-    static let body = Font.system(size: 14)
-    static let small = Font.system(size: 12)
+    static var mono: Font { Font.system(size: fs(12), design: .monospaced) }
+    static var body: Font { Font.system(size: fs(14)) }
+    static var small: Font { Font.system(size: fs(12)) }
 }
 
 struct Chip: View {
@@ -176,7 +186,7 @@ struct Chip: View {
     var tint: Color = T.muted
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Image(systemName: icon).font(.system(size: fs(10), weight: .semibold))
             Text(text).font(T.small).lineLimit(1)
         }
         .foregroundStyle(tint)
@@ -185,3 +195,6 @@ struct Chip: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.line, lineWidth: 1))
     }
 }
+
+/// 按设置里的字号比例缩放字号
+func fs(_ size: CGFloat) -> CGFloat { size * CGFloat(ThemeStore.shared.fontScale) }

@@ -210,18 +210,18 @@ struct LaunchGateView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("启动检查").font(.system(size: 24, weight: .semibold)).foregroundStyle(T.ink)
-                    Text("确认 Claude 通过公司 FCF 中转运行，通过后进入对话界面。").font(.system(size: 13)).foregroundStyle(T.muted)
+                    Text("启动检查").font(.system(size: fs(24), weight: .semibold)).foregroundStyle(T.ink)
+                    Text("确认 Claude 通过公司 FCF 中转运行，通过后进入对话界面。").font(.system(size: fs(13))).foregroundStyle(T.muted)
                 }
                 checklist
                 switch gate.phase {
                 case .update(let cur, let latest): updateCard(cur, latest)
                 case .needsSetup: setupHint
-                case .ready: Label("全部就绪，正在进入…", systemImage: "checkmark.seal.fill").foregroundStyle(T.ok).font(.system(size: 14, weight: .medium))
+                case .ready: Label("全部就绪，正在进入…", systemImage: "checkmark.seal.fill").foregroundStyle(T.ok).font(.system(size: fs(14), weight: .medium))
                 default: EmptyView()
                 }
                 if gate.phase != .checking && gate.phase != .ready && !gate.running {
-                    Button("重新检查") { gate.runChecks() }.buttonStyle(.link).font(.system(size: 13))
+                    Button("重新检查") { gate.runChecks() }.buttonStyle(.link).font(.system(size: fs(13)))
                 }
                 if gate.showTerminal { terminal.id("terminal") }
             }
@@ -255,10 +255,10 @@ struct LaunchGateView: View {
                         case .warn: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(T.run)
                         }
                     }
-                    .font(.system(size: 15)).frame(width: 20, height: 20)
-                    Text(c.title).font(.system(size: 13.5)).foregroundStyle(T.ink)
+                    .font(.system(size: fs(15))).frame(width: 20, height: 20)
+                    Text(c.title).font(.system(size: fs(13.5))).foregroundStyle(T.ink)
                     Spacer()
-                    Text(c.detail).font(.system(size: 12)).foregroundStyle(c.state == .fail ? T.err : T.muted)
+                    Text(c.detail).font(.system(size: fs(12))).foregroundStyle(c.state == .fail ? T.err : T.muted)
                         .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
@@ -271,13 +271,13 @@ struct LaunchGateView: View {
 
     func updateCard(_ cur: String, _ latest: String) -> some View {
         HStack(alignment: .center, spacing: 14) {
-            Image(systemName: "arrow.up.circle.fill").font(.system(size: 26)).foregroundStyle(T.accent)
+            Image(systemName: "arrow.up.circle.fill").font(.system(size: fs(26))).foregroundStyle(T.accent)
             VStack(alignment: .leading, spacing: 3) {
-                Text("FCF 有新版本 \(cur) → \(latest)").font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
-                Text("升级会在下面的终端里运行 fcf update，过程中需要确认的地方由你来按。").font(.system(size: 12)).foregroundStyle(T.muted)
+                Text("FCF 有新版本 \(cur) → \(latest)").font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
+                Text("升级会在下面的终端里运行 fcf update，过程中需要确认的地方由你来按。").font(.system(size: fs(12))).foregroundStyle(T.muted)
             }
             Spacer()
-            Button("这次不升级") { gate.skipUpdate() }.buttonStyle(.plain).foregroundStyle(T.muted).font(.system(size: 13))
+            Button("这次不升级") { gate.skipUpdate() }.buttonStyle(.plain).foregroundStyle(T.muted).font(.system(size: fs(13)))
                 .disabled(gate.running)
             Button("升级") { gate.upgrade(cols: cols) }.buttonStyle(PrimaryButton()).disabled(gate.running)
         }
@@ -288,9 +288,9 @@ struct LaunchGateView: View {
 
     var setupHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("还没通过 FCF 中转").font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
+            Text("还没通过 FCF 中转").font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
             Text("在下面输入 fcf 回车，按菜单完成登录和 Claude Code 配置。命令结束后会自动重新检查，全部通过就进入对话界面。")
-                .font(.system(size: 12.5)).foregroundStyle(T.muted).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: fs(12.5))).foregroundStyle(T.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -298,12 +298,12 @@ struct LaunchGateView: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Circle().fill(gate.running ? T.run : Color(white: 0.4)).frame(width: 7, height: 7)
-                Text(gate.running ? "运行中，直接在终端里按键操作" : "终端").font(.system(size: 12)).foregroundStyle(Color(white: 0.7))
+                Text(gate.running ? "运行中，直接在终端里按键操作" : "终端").font(.system(size: fs(12))).foregroundStyle(Color(white: 0.7))
                 Spacer()
-                Button("复制输出") { gate.copyOutput() }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Color(white: 0.7))
+                Button("复制输出") { gate.copyOutput() }.buttonStyle(.plain).font(.system(size: fs(12))).foregroundStyle(Color(white: 0.7))
                     .help("⌘C 也可以")
                 if gate.running {
-                    Button("停止") { gate.stop() }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Color(white: 0.8))
+                    Button("停止") { gate.stop() }.buttonStyle(.plain).font(.system(size: fs(12))).foregroundStyle(Color(white: 0.8))
                         .help("相当于 Ctrl+C")
                 }
             }
@@ -312,12 +312,12 @@ struct LaunchGateView: View {
 
             if !gate.running {
                 HStack(spacing: 8) {
-                    Text("$").font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(Color(red: 0.45, green: 0.80, blue: 0.50))
+                    Text("$").font(.system(size: fs(13), weight: .bold, design: .monospaced)).foregroundStyle(Color(red: 0.45, green: 0.80, blue: 0.50))
                     TextField("", text: $command, prompt: Text("输入 fcf 后回车").foregroundColor(Color(white: 0.58)))
-                        .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced)).foregroundStyle(Color(white: 0.92))
+                        .textFieldStyle(.plain).font(.system(size: fs(13), design: .monospaced)).foregroundStyle(Color(white: 0.92))
                         .focused($inputFocused)
                         .onSubmit(submit)
-                    Button("运行", action: submit).buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Color(white: 0.8))
+                    Button("运行", action: submit).buttonStyle(.plain).font(.system(size: fs(12))).foregroundStyle(Color(white: 0.8))
                         .disabled(command.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
@@ -326,7 +326,7 @@ struct LaunchGateView: View {
 
             if gate.term.plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !gate.running {
                 Text("命令的输出会显示在这里。运行中可以直接按方向键、回车、y / n 操作菜单。")
-                    .font(.system(size: 12, design: .monospaced)).foregroundStyle(Color(white: 0.45))
+                    .font(.system(size: fs(12), design: .monospaced)).foregroundStyle(Color(white: 0.45))
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
             } else {
                 TerminalScreen(buf: gate.term, active: gate.running, onKey: gate.send, onCopy: gate.copyOutput)
@@ -348,7 +348,7 @@ struct LaunchGateView: View {
     }
 
     func updateCols(_ w: CGFloat) {
-        let charW = ("M" as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)]).width
+        let charW = ("M" as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: fs(12.5), weight: .regular)]).width
         let c = max(40, Int((w - 24) / charW))
         if c != cols { cols = c; gate.resize(cols: c) }
     }
@@ -367,7 +367,7 @@ struct TerminalScreen: View {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(0..<buf.lines.count, id: \.self) { r in
                         Text(buf.attributed(r, showCursor: active && r == buf.row))
-                            .font(.system(size: 12.5, design: .monospaced))
+                            .font(.system(size: fs(12.5), design: .monospaced))
                             .frame(maxWidth: .infinity, minHeight: 15, alignment: .leading)
                             .id(r)
                     }

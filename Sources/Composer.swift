@@ -15,6 +15,10 @@ struct Composer: View {
     }
 
     @State private var height: CGFloat = 24
+    /// 手动拖出来的输入区高度（0 = 跟着内容自动长高）；最高和自动长高的上限一样
+    @AppStorage("composerManualHeight") private var manualHeight: Double = 0
+    @State private var dragStart: Double?
+    static let maxInputHeight: CGFloat = 220
     @State private var slashIndex = 0
     @State private var focusToken = 0
     @State private var historyIndex: Int?     // ↑↓ 翻之前发过的消息
@@ -62,13 +66,14 @@ struct Composer: View {
                               onArrow: moveSlash,
                               onTab: completeSlash,
                               onEscape: { if session.busy { session.interrupt() } else if text.hasPrefix("/") { draft.text = "" } })
-                    .frame(height: max(height, tall ? 64 : 24))
+                    .frame(height: min(Self.maxInputHeight, max(height, CGFloat(manualHeight), tall ? 64 : 24)))
                 bar
             }
             .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
             .background(RoundedRectangle(cornerRadius: 16).fill(T.paper))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(T.line, lineWidth: 1))
             .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
+            .overlay(alignment: .top) { resizeGrip }
         }
         .onChange(of: draft.text) {
             slashIndex = 0
@@ -77,10 +82,24 @@ struct Composer: View {
         .onChange(of: session.id) { focusToken += 1 }
     }
 
+    /// 输入框顶边的拖动条：往上拖变高，往下拖变矮；双击恢复自动高度
+    var resizeGrip: some View {
+        ResizeGrip()
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in
+                    let start = dragStart ?? max(manualHeight, Double(height))
+                    if dragStart == nil { dragStart = start }
+                    manualHeight = min(Double(Self.maxInputHeight), max(24, start - Double(v.translation.height)))
+                }
+                .onEnded { _ in dragStart = nil })
+            .onTapGesture(count: 2) { manualHeight = 0 }
+            .help("拖动调整输入框高度，双击恢复自动")
+    }
+
     var bar: some View {
         HStack(spacing: 8) {
             Button(action: attach) {
-                Image(systemName: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(T.ink)
+                Image(systemName: "plus").font(.system(size: fs(13), weight: .semibold)).foregroundStyle(T.ink)
                     .frame(width: 28, height: 28).background(Circle().fill(T.sunk))
             }
             .buttonStyle(.plain).help("添加图片或文件")
@@ -93,7 +112,7 @@ struct Composer: View {
                 }
             } label: {
                 Label(session.mode.label, systemImage: session.mode == .bypassPermissions ? "bolt.shield" : "checkmark.shield")
-                    .font(.system(size: 12)).foregroundStyle(T.ink)
+                    .font(.system(size: fs(12))).foregroundStyle(T.ink)
             }
             .menuStyle(.borderlessButton).fixedSize().help("Claude 做事前要不要先问你")
 
@@ -115,13 +134,13 @@ struct Composer: View {
                     }
                 }
             } label: {
-                Text(modelLabel).font(.system(size: 12)).foregroundStyle(T.ink)
+                Text(modelLabel).font(.system(size: fs(12))).foregroundStyle(T.ink)
             }
             .menuStyle(.borderlessButton).fixedSize()
 
             Button(action: session.busy && !canSend ? session.interrupt : submit) {
                 Image(systemName: session.busy && !canSend ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(canSend || session.busy ? T.onAccent : Color.white)
+                    .font(.system(size: fs(13), weight: .bold)).foregroundStyle(canSend || session.busy ? T.onAccent : Color.white)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(canSend || session.busy ? T.accent : T.muted.opacity(0.4)))
             }
@@ -166,7 +185,7 @@ struct Composer: View {
             ForEach(Array(slashMatches.enumerated()), id: \.offset) { i, c in
                 Button { pick(c) } label: {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text("/" + c.name).font(.system(size: 13, weight: .medium)).foregroundStyle(T.ink)
+                        Text("/" + c.name).font(.system(size: fs(13), weight: .medium)).foregroundStyle(T.ink)
                         Text(c.description).font(T.small).foregroundStyle(T.muted).lineLimit(1)
                         Spacer(minLength: 0)
                     }
@@ -235,5 +254,22 @@ struct Composer: View {
         panel.directoryURL = URL(fileURLWithPath: session.cwd)
         guard panel.runModal() == .OK else { return }
         addFiles(panel.urls)
+    }
+}
+
+struct ResizeGrip: View {
+    @State private var hover = false
+    var body: some View {
+        ZStack {
+            Color.clear.frame(height: 12)
+            Capsule().fill(hover ? T.muted : T.line).frame(width: 36, height: 4)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .offset(y: -6)
+        .onHover { h in
+            hover = h
+            if h { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+        }
     }
 }

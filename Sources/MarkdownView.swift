@@ -90,7 +90,7 @@ enum MarkdownParser {
                                                            failurePolicy: .returnPartiallyParsedIfPossible)
         var a = (try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s)
         for run in a.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            a[run.range].font = .system(size: 13, design: .monospaced)
+            a[run.range].font = .system(size: fs(13), design: .monospaced)
             a[run.range].backgroundColor = T.sunk
         }
         return a
@@ -151,7 +151,7 @@ struct TableBlock: View {
     /// 先量每列最长内容的宽度，再给每列定宽（最宽 300）：文字在列内换行，行高跟着撑开，不会叠在一起
     var widths: [CGFloat] {
         let cols = rows.map(\.count).max() ?? 0
-        let body = NSFont.systemFont(ofSize: 13), bold = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let body = NSFont.systemFont(ofSize: fs(13)), bold = NSFont.systemFont(ofSize: fs(13), weight: .semibold)
         return (0..<cols).map { ci in
             var w: CGFloat = 0
             for (ri, r) in rows.enumerated() where ci < r.count {
@@ -179,7 +179,7 @@ struct TableGrid: View {
                     GridRow(alignment: .top) {
                         ForEach(0..<ws.count, id: \.self) { ci in
                             Text(MarkdownParser.inline(ci < r.count ? r[ci] : ""))
-                                .font(ri == 0 ? .system(size: 13, weight: .semibold) : .system(size: 13))
+                                .font(ri == 0 ? .system(size: fs(13), weight: .semibold) : .system(size: fs(13)))
                                 .lineSpacing(2)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 10).padding(.vertical, 6)

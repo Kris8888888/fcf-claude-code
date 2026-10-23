@@ -102,7 +102,7 @@ final class ComposerTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty else { return }
-        let attrs: [NSAttributedString.Key: Any] = [.font: font ?? .systemFont(ofSize: 14), .foregroundColor: NSColor.placeholderTextColor]
+        let attrs: [NSAttributedString.Key: Any] = [.font: font ?? .systemFont(ofSize: fs(14)), .foregroundColor: NSColor.placeholderTextColor]
         placeholder.draw(at: NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height), withAttributes: attrs)
     }
 }
@@ -130,7 +130,7 @@ struct InputTextView: NSViewRepresentable {
         tv.delegate = context.coordinator
         tv.isRichText = false
         tv.allowsUndo = true
-        tv.font = .systemFont(ofSize: 14)
+        tv.font = .systemFont(ofSize: fs(14))
         tv.textColor = .labelColor
         tv.drawsBackground = false
         tv.textContainerInset = NSSize(width: 2, height: 4)

@@ -61,7 +61,7 @@ struct FileBadge: View {
                     .font(.system(size: i.badge == "pdf" ? 9 : 14, weight: .heavy, design: .rounded))
                     .foregroundStyle(i.color)
             } else {
-                Image(systemName: i.badge).font(.system(size: 14, weight: .semibold)).foregroundStyle(i.color)
+                Image(systemName: i.badge).font(.system(size: fs(14), weight: .semibold)).foregroundStyle(i.color)
             }
         }
         .frame(width: 32, height: 32)
@@ -78,10 +78,10 @@ struct FileCard: View {
         HStack(spacing: 10) {
             FileBadge(url: url)
             VStack(alignment: .leading, spacing: 2) {
-                Text(url.lastPathComponent).font(.system(size: 13)).foregroundStyle(T.ink)
+                Text(url.lastPathComponent).font(.system(size: fs(13))).foregroundStyle(T.ink)
                     .lineLimit(1).truncationMode(.middle)
                 Text([i.type, FileKind.size(url)].compactMap { $0 }.joined(separator: " · "))
-                    .font(.system(size: 11)).foregroundStyle(T.muted)
+                    .font(.system(size: fs(11))).foregroundStyle(T.muted)
             }
             Spacer(minLength: 0)
         }
@@ -92,7 +92,7 @@ struct FileCard: View {
         .overlay(alignment: .topTrailing) {
             if let onRemove, hover {
                 Button(action: onRemove) {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 15))
+                    Image(systemName: "xmark.circle.fill").font(.system(size: fs(15)))
                         .foregroundStyle(.white, T.ink.opacity(0.55))
                 }
                 .buttonStyle(.plain).offset(x: 5, y: -5).help("移除")
@@ -120,7 +120,7 @@ struct ImageCard: View {
             .overlay(alignment: .topTrailing) {
                 if let onRemove, hover {
                     Button(action: onRemove) {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.white, T.ink.opacity(0.55))
+                        Image(systemName: "xmark.circle.fill").font(.system(size: fs(15))).foregroundStyle(.white, T.ink.opacity(0.55))
                     }
                     .buttonStyle(.plain).offset(x: 5, y: -5)
                 }
@@ -194,10 +194,10 @@ struct ArtifactCard: View {
         HStack(spacing: 12) {
             FileBadge(url: url).scaleEffect(1.1)
             VStack(alignment: .leading, spacing: 3) {
-                Text(url.lastPathComponent).font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
+                Text(url.lastPathComponent).font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
                     .lineLimit(1).truncationMode(.middle)
                 Text(exists ? [artifact.created ? "新建" : "修改", FileKind.size(url)].compactMap { $0 }.joined(separator: " · ") : "文件已不在原位置")
-                    .font(.system(size: 12)).foregroundStyle(exists ? T.muted : T.err)
+                    .font(.system(size: fs(12))).foregroundStyle(exists ? T.muted : T.err)
             }
             Spacer(minLength: 8)
             if exists {
@@ -211,7 +211,7 @@ struct ArtifactCard: View {
                             NSPasteboard.general.setString(url.path, forType: .string)
                         }
                     } label: {
-                        Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(T.muted).frame(width: 30, height: 30)
+                        Image(systemName: "ellipsis").font(.system(size: fs(14))).foregroundStyle(T.muted).frame(width: 30, height: 30)
                     }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 }
@@ -230,7 +230,7 @@ struct ArtifactCard: View {
 
     func iconButton(_ icon: String, _ tip: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(T.muted).frame(width: 30, height: 30).contentShape(Rectangle())
+            Image(systemName: icon).font(.system(size: fs(14))).foregroundStyle(T.muted).frame(width: 30, height: 30).contentShape(Rectangle())
         }
         .buttonStyle(.plain).help(tip)
     }

@@ -20,8 +20,8 @@ struct TrashView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "trash").foregroundStyle(T.muted)
-                Text("废纸篓").font(.system(size: 15, weight: .semibold)).foregroundStyle(T.ink)
-                Text("\(store.entries.count) 个对话").font(.system(size: 12)).foregroundStyle(T.muted)
+                Text("废纸篓").font(.system(size: fs(15), weight: .semibold)).foregroundStyle(T.ink)
+                Text("\(store.entries.count) 个对话").font(.system(size: fs(12))).foregroundStyle(T.muted)
                 Spacer()
                 Button("清空废纸篓…") { confirmEmpty = true }.disabled(store.entries.isEmpty)
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -31,9 +31,9 @@ struct TrashView: View {
 
             if store.entries.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "trash").font(.system(size: 30)).foregroundStyle(T.line)
-                    Text("废纸篓是空的").font(.system(size: 14, weight: .medium)).foregroundStyle(T.ink)
-                    Text("删除的对话会先放在这里，随时可以恢复。").font(.system(size: 12)).foregroundStyle(T.muted)
+                    Image(systemName: "trash").font(.system(size: fs(30))).foregroundStyle(T.line)
+                    Text("废纸篓是空的").font(.system(size: fs(14), weight: .medium)).foregroundStyle(T.ink)
+                    Text("删除的对话会先放在这里，随时可以恢复。").font(.system(size: fs(12))).foregroundStyle(T.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -45,12 +45,12 @@ struct TrashView: View {
 
             Divider()
             HStack(spacing: 8) {
-                Text("删除的对话保留").font(.system(size: 12)).foregroundStyle(T.muted)
+                Text("删除的对话保留").font(.system(size: fs(12))).foregroundStyle(T.muted)
                 Picker("", selection: $store.retentionDays) {
                     Text("7 天").tag(7); Text("30 天").tag(30); Text("90 天").tag(90); Text("永久").tag(0)
                 }
                 .labelsHidden().fixedSize()
-                Text(store.retentionDays == 0 ? "，不会自动清除" : "，到期自动彻底删除").font(.system(size: 12)).foregroundStyle(T.muted)
+                Text(store.retentionDays == 0 ? "，不会自动清除" : "，到期自动彻底删除").font(.system(size: fs(12))).foregroundStyle(T.muted)
                 Spacer()
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -80,8 +80,8 @@ struct TrashView: View {
     var list: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(T.muted)
-                TextField("搜索废纸篓", text: $query).textFieldStyle(.plain).font(.system(size: 13))
+                Image(systemName: "magnifyingglass").font(.system(size: fs(11))).foregroundStyle(T.muted)
+                TextField("搜索废纸篓", text: $query).textFieldStyle(.plain).font(.system(size: fs(13)))
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: 7).fill(T.sunk))
@@ -90,7 +90,7 @@ struct TrashView: View {
                 LazyVStack(spacing: 2) {
                     ForEach(filtered) { e in row(e) }
                     if filtered.isEmpty {
-                        Text("没有找到「\(query)」").font(.system(size: 12)).foregroundStyle(T.muted).padding(.top, 20)
+                        Text("没有找到「\(query)」").font(.system(size: fs(12))).foregroundStyle(T.muted).padding(.top, 20)
                     }
                 }
                 .padding(.horizontal, 8).padding(.bottom, 8)
@@ -103,13 +103,13 @@ struct TrashView: View {
         let sel = selected == e
         return Button { selected = e } label: {
             VStack(alignment: .leading, spacing: 3) {
-                Text(e.title).font(.system(size: 13, weight: sel ? .medium : .regular)).foregroundStyle(T.ink).lineLimit(1)
+                Text(e.title).font(.system(size: fs(13), weight: sel ? .medium : .regular)).foregroundStyle(T.ink).lineLimit(1)
                 HStack(spacing: 6) {
                     Text(e.folder).lineLimit(1)
                     Text(Self.relative(e.deletedAt) + "删除")
                     if let d = store.daysLeft(e) { Text(d <= 3 ? "\(d) 天后清除" : "保留 \(d) 天").foregroundStyle(d <= 3 ? T.err : T.muted) }
                 }
-                .font(.system(size: 11)).foregroundStyle(T.muted)
+                .font(.system(size: fs(11))).foregroundStyle(T.muted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
@@ -130,8 +130,8 @@ struct TrashView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(e.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink).lineLimit(1)
-                        Text(e.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: 11)).foregroundStyle(T.muted).lineLimit(1)
+                        Text(e.title).font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink).lineLimit(1)
+                        Text(e.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.system(size: fs(11))).foregroundStyle(T.muted).lineLimit(1)
                     }
                     Spacer()
                     Button("彻底删除…") { confirmPurge = e }
@@ -192,12 +192,12 @@ struct ToastBar: View {
     var body: some View {
         if let t = app.toast {
             HStack(spacing: 8) {
-                Text(t.text).font(.system(size: 12)).foregroundStyle(T.ink).lineLimit(2)
+                Text(t.text).font(.system(size: fs(12))).foregroundStyle(T.ink).lineLimit(2)
                 Spacer(minLength: 4)
                 if let undo = t.undo {
-                    Button("撤销") { undo(); app.toast = nil }.buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(T.accent)
+                    Button("撤销") { undo(); app.toast = nil }.buttonStyle(.plain).font(.system(size: fs(12), weight: .semibold)).foregroundStyle(T.accent)
                 }
-                Button { app.toast = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(T.muted) }
+                Button { app.toast = nil } label: { Image(systemName: "xmark").font(.system(size: fs(10), weight: .semibold)).foregroundStyle(T.muted) }
                     .buttonStyle(.plain)
             }
             .padding(.horizontal, 12).padding(.vertical, 9)

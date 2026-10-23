@@ -13,7 +13,27 @@ final class Updater: ObservableObject {
         let zipName: String
         let zipURL: String
         let page: String
+
+        /// 从更新说明里挑出最多 3 条很短的要点（取每条的加粗标题，没有就取第一句）
+        var highlights: [String] {
+            notes.components(separatedBy: "\n").compactMap { raw -> String? in
+                let l = raw.trimmingCharacters(in: .whitespaces)
+                guard l.hasPrefix("- ") || l.hasPrefix("* ") else { return nil }
+                let body = String(l.dropFirst(2))
+                if let a = body.range(of: "**"), let b = body.range(of: "**", range: a.upperBound..<body.endIndex) {
+                    return String(body[a.upperBound..<b.lowerBound]).trimmingCharacters(in: CharacterSet(charactersIn: "：: "))
+                }
+                let first = body.components(separatedBy: CharacterSet(charactersIn: "：:。，,")).first ?? body
+                return first.count > 18 ? String(first.prefix(17)) + "…" : first
+            }
+            .filter { !$0.isEmpty }
+            .prefix(3).map { $0 }
+        }
     }
+
+    /// 最近一次读到的新版本（失败引导里用它的下载页）
+    @Published var lastRelease: Release?
+    static var releasesPage: String { "https://github.com/\(repo)/releases/latest" }
 
     enum State: Equatable {
         case idle, checking, upToDate, available(Release), downloading(Release), installing, failed(String)
@@ -48,6 +68,7 @@ final class Updater: ObservableObject {
                 switch result {
                 case .success(let r):
                     if Self.newer(r.version, than: self.current) {
+                        self.lastRelease = r
                         // 自动检查时，用户点过「这个版本先不更新」就不再打扰；手动检查总是显示
                         self.state = (!manual && self.dismissedVersion == r.version) ? .idle : .available(r)
                         // 仅用于测试更新流程：DUIHUATAI_AUTOUPDATE=1 发现新版直接装
@@ -158,23 +179,42 @@ final class Updater: ObservableObject {
     }
 
     /// 写一个小脚本：等当前 App 退出 → 换上新版（失败就还原旧版）→ 重新打开
+    /// 是不是从只读位置运行：直接在 dmg 安装盘里打开，或从「下载」里打开被系统挪到临时位置
+    static var runningFromReadOnlyLocation: Bool {
+        let p = Bundle.main.bundlePath
+        return p.hasPrefix("/Volumes/") || p.contains("/AppTranslocation/")
+    }
+
+    /// 新版装到哪：正常情况替换自己；从只读位置运行时装进「应用程序」
+    static var installTarget: String {
+        // 仅用于测试：DUIHUATAI_INSTALL_DIR 把「应用程序」换成别的目录
+        let apps = ProcessInfo.processInfo.environment["DUIHUATAI_INSTALL_DIR"] ?? "/Applications"
+        return runningFromReadOnlyLocation ? apps + "/" + (Bundle.main.bundlePath as NSString).lastPathComponent : Bundle.main.bundlePath
+    }
+
+    /// 写一个小脚本：等当前 App 退出 → 换上新版（失败就还原旧版）→ 重新打开
     static func replaceAndRelaunch(with newApp: URL) throws {
-        let target = Bundle.main.bundlePath
-        guard FileManager.default.isWritableFile(atPath: (target as NSString).deletingLastPathComponent) else {
-            throw UpdateError(msg: "没有权限写入 \((target as NSString).deletingLastPathComponent)")
+        let target = installTarget
+        let parent = (target as NSString).deletingLastPathComponent
+        guard FileManager.default.isWritableFile(atPath: parent) else {
+            throw UpdateError(msg: "没有权限写入「\(parent == "/Applications" ? "应用程序" : parent)」")
         }
         let pid = ProcessInfo.processInfo.processIdentifier
-        let script = newApp.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("install.sh")
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("duihuatai-install-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let script = work.appendingPathComponent("install.sh")
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let body = """
         #!/bin/bash
         for i in $(seq 1 100); do kill -0 \(pid) 2>/dev/null || break; sleep 0.2; done
         T=\(q(target))
         rm -rf "$T.old"
-        if mv "$T" "$T.old" && /usr/bin/ditto \(q(newApp.path)) "$T"; then
+        if [ -e "$T" ]; then mv "$T" "$T.old" || exit 1; fi
+        if /usr/bin/ditto \(q(newApp.path)) "$T"; then
           rm -rf "$T.old"
+          /usr/bin/xattr -dr com.apple.quarantine "$T" 2>/dev/null
         else
-          rm -rf "$T"; mv "$T.old" "$T"
+          rm -rf "$T"; [ -e "$T.old" ] && mv "$T.old" "$T"
         fi
         open "$T"
         """
@@ -185,6 +225,17 @@ final class Updater: ObservableObject {
         try p.run()
         p.waitUntilExit()
     }
+
+    /// 从安装盘里直接打开时：把自己装进「应用程序」并从那里重新打开
+    func moveToApplications(app: AppState?) {
+        do {
+            try Self.replaceAndRelaunch(with: Bundle.main.bundleURL)
+            app?.shutdownAll()
+            NSApp.terminate(nil)
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
 }
 
 // MARK: 侧栏里的更新卡片（只在有事可说时出现）
@@ -193,6 +244,7 @@ struct UpdateBanner: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var up = Updater.shared
     @State private var showNotes = false
+    @State private var showGuide = false
     @State private var confirmBusy = false
 
     var body: some View {
@@ -200,14 +252,25 @@ struct UpdateBanner: View {
         case .available(let r):
             card {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("新版本 \(r.version)").font(.system(size: 13, weight: .semibold)).foregroundStyle(T.ink)
-                    Text("当前 \(up.current)").font(.system(size: 11)).foregroundStyle(T.muted)
+                    Text("新版本 \(r.version)").font(.system(size: fs(13), weight: .semibold)).foregroundStyle(T.ink)
+                    Text("当前 \(up.current)").font(.system(size: fs(11))).foregroundStyle(T.muted)
                     Spacer()
-                    Button { up.skip(r) } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                    Button { up.skip(r) } label: { Image(systemName: "xmark").font(.system(size: fs(10), weight: .semibold)) }
                         .buttonStyle(.plain).foregroundStyle(T.muted).help("这个版本先不更新")
                 }
+                // 这次改了什么：最多 3 条，一行一条
+                if !r.highlights.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(r.highlights, id: \.self) { h in
+                            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                Circle().fill(T.accent).frame(width: 4, height: 4).offset(y: -2)
+                                Text(h).font(.system(size: fs(12))).foregroundStyle(T.ink.opacity(0.8)).lineLimit(1)
+                            }
+                        }
+                    }
+                }
                 HStack(spacing: 10) {
-                    Button("更新内容") { showNotes = true }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(T.accent)
+                    Button("更新内容") { showNotes = true }.buttonStyle(.plain).font(.system(size: fs(12))).foregroundStyle(T.accent)
                         .popover(isPresented: $showNotes) { notes(r) }
                     Spacer()
                     Button("更新并重启") {
@@ -224,27 +287,59 @@ struct UpdateBanner: View {
             card {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("正在下载 \(r.version)…").font(.system(size: 12)).foregroundStyle(T.ink)
+                    Text("正在下载 \(r.version)…").font(.system(size: fs(12))).foregroundStyle(T.ink)
                 }
             }
         case .installing:
-            card { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在安装，马上重启…").font(.system(size: 12)).foregroundStyle(T.ink) } }
+            card { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在安装，马上重启…").font(.system(size: fs(12))).foregroundStyle(T.ink) } }
         case .checking:
             EmptyView()
         case .upToDate:
-            card { Label("已经是最新版本 \(up.current)", systemImage: "checkmark.circle").font(.system(size: 12)).foregroundStyle(T.ok) }
+            card { Label("已经是最新版本 \(up.current)", systemImage: "checkmark.circle").font(.system(size: fs(12))).foregroundStyle(T.ok) }
         case .failed(let msg):
-            card {
-                HStack(alignment: .top) {
-                    Text("更新没成功：" + msg).font(.system(size: 12)).foregroundStyle(T.err).fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button { up.state = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
-                        .buttonStyle(.plain).foregroundStyle(T.muted)
-                }
-                Button("重试") { up.check(manual: true) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(T.accent)
-            }
+            failedCard(msg)
         case .idle:
             EmptyView()
+        }
+    }
+
+    /// 自动更新失败：说明原因 + 去 GitHub 手动下载 + 三步引导（教大家下对安装包）
+    func failedCard(_ msg: String) -> some View {
+        card {
+            HStack(alignment: .firstTextBaseline) {
+                Text("自动更新没成功").font(.system(size: fs(13), weight: .semibold)).foregroundStyle(T.ink)
+                Spacer()
+                Button { up.state = .idle } label: { Image(systemName: "xmark").font(.system(size: fs(10), weight: .semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(T.muted)
+            }
+            Text(msg).font(.system(size: fs(11))).foregroundStyle(T.err).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button("重试") { up.check(manual: true) }.buttonStyle(.plain).font(.system(size: fs(12))).foregroundStyle(T.accent)
+                Spacer()
+                Button("去 GitHub 下载") {
+                    NSWorkspace.shared.open(URL(string: up.lastRelease?.page ?? Updater.releasesPage)!)
+                    showGuide = true
+                }
+                .buttonStyle(PrimaryButton())
+            }
+            DisclosureGroup(isExpanded: $showGuide) {
+                VStack(alignment: .leading, spacing: 6) {
+                    guideStep(1, "在打开的网页里往下找到「Assets」")
+                    guideStep(2, "点名字带「dmg 安装包」的那个下载。不要下 zip 和 Source code")
+                    guideStep(3, "打开下载的 dmg，把 App 拖进「应用程序」，提示已存在时选「替换」")
+                }
+                .padding(.top, 4)
+            } label: {
+                Text("怎么下载新版").font(.system(size: fs(12))).foregroundStyle(T.muted)
+            }
+        }
+    }
+
+    func guideStep(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("\(n)").font(.system(size: fs(11), weight: .semibold)).foregroundStyle(T.onAccent)
+                .frame(width: 16, height: 16).background(Circle().fill(T.accent))
+            Text(text).font(.system(size: fs(12))).foregroundStyle(T.ink).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -258,7 +353,7 @@ struct UpdateBanner: View {
 
     func notes(_ r: Updater.Release) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(r.version) 更新内容").font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
+            Text("\(r.version) 更新内容").font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
             ScrollView { MarkdownView(text: r.notes.isEmpty ? "这个版本没有写更新说明。" : r.notes) }.frame(maxHeight: 320)
         }
         .padding(16).frame(width: 380)

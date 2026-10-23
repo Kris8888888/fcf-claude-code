@@ -20,7 +20,7 @@ enum MarkdownAttr {
     static var sunk: NSColor { NSColor(T.sunk) }
     static var accent: NSColor { NSColor(T.accent) }
 
-    static let bodySize: CGFloat = 14
+    static var bodySize: CGFloat { fs(14) }
 
     static func para(lineSpacing: CGFloat = 4, after: CGFloat = 10, before: CGFloat = 0, indent: CGFloat = 0, head: CGFloat? = nil) -> NSMutableParagraphStyle {
         let p = NSMutableParagraphStyle()
@@ -72,12 +72,12 @@ enum MarkdownAttr {
         }
 
         // 表格、代码块后面留一点空，免得和下一段贴在一起
-        func spacer() { add(NSAttributedString(string: "\u{200B}", attributes: [.font: NSFont.systemFont(ofSize: 4)]), para(lineSpacing: 0, after: 4)) }
+        func spacer() { add(NSAttributedString(string: "\u{200B}", attributes: [.font: NSFont.systemFont(ofSize: fs(4))]), para(lineSpacing: 0, after: 4)) }
 
         for b in blocks {
             switch b {
             case .heading(let lv, let s):
-                let size: CGFloat = lv <= 1 ? 19 : lv == 2 ? 17 : 15
+                let size: CGFloat = fs(lv <= 1 ? 19 : lv == 2 ? 17 : 15)
                 add(inline(s, font: .systemFont(ofSize: size, weight: .semibold), color: ink), para(after: 6, before: 6))
 
             case .paragraph(let s):
@@ -115,7 +115,7 @@ enum MarkdownAttr {
                 block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .maxX)
                 block.setWidth(8, type: .absoluteValueType, for: .padding, edge: .minY)
                 block.setWidth(8, type: .absoluteValueType, for: .padding, edge: .maxY)
-                let mono = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
+                let mono = NSFont.monospacedSystemFont(ofSize: fs(12.5), weight: .regular)
                 let lines = code.components(separatedBy: "\n")
                 for l in lines {
                     let p = para(lineSpacing: 2, after: 0); p.textBlocks = [block]
@@ -142,7 +142,7 @@ enum MarkdownAttr {
                         cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .maxY)
                         if ri == 0 { cell.backgroundColor = sunk }
                         let p = para(lineSpacing: 2, after: 0); p.textBlocks = [cell]
-                        let f: NSFont = ri == 0 ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
+                        let f: NSFont = ri == 0 ? .systemFont(ofSize: fs(13), weight: .semibold) : .systemFont(ofSize: fs(13))
                         add(inline(ci < r.count ? r[ci] : "", font: f, color: ink), p)
                     }
                 }
@@ -155,7 +155,7 @@ enum MarkdownAttr {
                 block.setBorderColor(line, for: .maxY)
                 block.setWidth(8, type: .absoluteValueType, for: .margin, edge: .maxY)
                 let p = para(lineSpacing: 0, after: 0); p.textBlocks = [block]
-                add(NSAttributedString(string: "\u{200B}", attributes: [.font: NSFont.systemFont(ofSize: 4)]), p)
+                add(NSAttributedString(string: "\u{200B}", attributes: [.font: NSFont.systemFont(ofSize: fs(4))]), p)
             }
         }
         // 去掉末尾多余的换行

@@ -167,9 +167,9 @@ struct LocalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(T.accent)
-                Text(item.toolName).font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(T.ink)
-                Text("本地命令，没有发给 Claude").font(.system(size: 11)).foregroundStyle(T.muted)
+                Image(systemName: "terminal").font(.system(size: fs(11))).foregroundStyle(T.accent)
+                Text(item.toolName).font(.system(size: fs(13), weight: .semibold, design: .monospaced)).foregroundStyle(T.ink)
+                Text("本地命令，没有发给 Claude").font(.system(size: fs(11))).foregroundStyle(T.muted)
             }
             MarkdownView(text: item.text).foregroundStyle(T.ink)
         }

@@ -9,8 +9,10 @@ struct ThemeSettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                FontSizePicker(store: store)
+
                 Text("选一套配色，对话窗口和设置窗口立即换上。启动检查里的终端框始终保持深色。")
-                    .font(.system(size: 12.5)).foregroundStyle(T.muted)
+                    .font(.system(size: fs(12.5))).foregroundStyle(T.muted)
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 14)], alignment: .leading, spacing: 16) {
                     ForEach(Palette.all) { p in
@@ -19,7 +21,7 @@ struct ThemeSettings: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("强调色").font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
+                    Text("强调色").font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
                     HStack(spacing: 12) {
                         Toggle("使用自定义强调色", isOn: Binding(
                             get: { store.accentOverride != nil },
@@ -69,9 +71,9 @@ struct ThemeCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(p.color(p.line), lineWidth: 1))
                 HStack(spacing: 6) {
-                    Text(p.name).font(.system(size: 13, weight: selected ? .semibold : .regular)).foregroundStyle(T.ink)
-                    if p.scheme != nil { Text(p.schemeLabel).font(.system(size: 11)).foregroundStyle(T.muted) }
-                    else { Text("浅色 / 深色自动").font(.system(size: 11)).foregroundStyle(T.muted) }
+                    Text(p.name).font(.system(size: fs(13), weight: selected ? .semibold : .regular)).foregroundStyle(T.ink)
+                    if p.scheme != nil { Text(p.schemeLabel).font(.system(size: fs(11))).foregroundStyle(T.muted) }
+                    else { Text("浅色 / 深色自动").font(.system(size: fs(11))).foregroundStyle(T.muted) }
                     Spacer()
                     if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(T.accent) }
                 }
@@ -139,5 +141,29 @@ struct ThemeCard: View {
             .frame(maxWidth: .infinity)
             .background(p.color(p.paper))
         }
+    }
+}
+
+/// 字号：四档，选了整个界面立即按新字号重排（对话内容、侧栏、设置都跟着变）
+struct FontSizePicker: View {
+    @ObservedObject var store: ThemeStore
+    static let options: [(String, Double)] = [("小", 0.9), ("标准", 1.0), ("大", 1.12), ("特大", 1.25)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("字号").font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
+                Spacer()
+                Picker("", selection: Binding(get: { store.fontScale }, set: { store.setFontScale($0) })) {
+                    ForEach(Self.options, id: \.1) { Text($0.0).tag($0.1) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 260)
+            }
+            Text("Claude 的回复、侧栏和设置里的文字都会按这个大小显示。")
+                .font(.system(size: fs(14))).foregroundStyle(T.ink.opacity(0.85))
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(T.sunk))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(T.line, lineWidth: 1))
     }
 }

@@ -13,7 +13,7 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { app.newSession() } label: {
                 Label("新会话", systemImage: "plus.bubble")
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(T.ink)
+                    .font(.system(size: fs(14), weight: .medium)).foregroundStyle(T.ink)
                     .frame(maxWidth: .infinity).padding(.vertical, 9)
                     .background(RoundedRectangle(cornerRadius: 9).fill(T.paper))
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(T.line, lineWidth: 1))
@@ -23,8 +23,8 @@ struct Sidebar: View {
             .padding(.horizontal, 12).padding(.top, 8)
 
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(T.muted)
-                TextField("搜索对话（⌘F）", text: $app.search).textFieldStyle(.plain).font(.system(size: 13))
+                Image(systemName: "magnifyingglass").font(.system(size: fs(11))).foregroundStyle(T.muted)
+                TextField("搜索对话（⌘F）", text: $app.search).textFieldStyle(.plain).font(.system(size: fs(13)))
                     .focused($searchFocused)
                     .onExitCommand { app.search = ""; searchFocused = false }
                 if !app.search.isEmpty {
@@ -46,7 +46,7 @@ struct Sidebar: View {
                 } label: { Image(systemName: "folder.badge.plus") }
                     .buttonStyle(.plain).foregroundStyle(T.muted).help("在另一个文件夹开新会话")
             }
-            .font(.system(size: 12))
+            .font(.system(size: fs(12)))
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
 
             ScrollView {
@@ -54,8 +54,8 @@ struct Sidebar: View {
                     let pins = app.pinnedRows
                     if !pins.isEmpty {
                         HStack(spacing: 6) {
-                            Image(systemName: "pin.fill").font(.system(size: 11)).foregroundStyle(T.accent).rotationEffect(.degrees(45))
-                            Text("置顶").font(.system(size: 13, weight: .medium)).foregroundStyle(T.ink)
+                            Image(systemName: "pin.fill").font(.system(size: fs(11))).foregroundStyle(T.accent).rotationEffect(.degrees(45))
+                            Text("置顶").font(.system(size: fs(13), weight: .medium)).foregroundStyle(T.ink)
                             Spacer()
                         }
                         .padding(.horizontal, 8).padding(.vertical, 6).padding(.top, 6)
@@ -70,13 +70,14 @@ struct Sidebar: View {
             ToastBar().padding(.horizontal, 10).padding(.top, 8)
                 .animation(.easeOut(duration: 0.2), value: app.toast?.id)
             UpdateBanner().padding(.horizontal, 10).padding(.top, 8)
+            if Updater.runningFromReadOnlyLocation { InstallLocationBanner().padding(.horizontal, 10).padding(.top, 8) }
             UsageCard().padding(.horizontal, 10).padding(.top, 10)
                 .contentShape(Rectangle())
                 .onTapGesture { app.statusPanel = .usage }
                 .help("点击查看用量与统计（⌘I）")
             HStack(spacing: 0) {
                 SettingsLink {
-                    Label("设置", systemImage: "gearshape").font(.system(size: 13)).foregroundStyle(T.ink)
+                    Label("设置", systemImage: "gearshape").font(.system(size: fs(13))).foregroundStyle(T.ink)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 10)
                         .contentShape(Rectangle())
                 }
@@ -89,7 +90,7 @@ struct Sidebar: View {
         .onChange(of: app.searchFocusToken) { searchFocused = true }
         .sheet(item: $renaming) { row in
             VStack(alignment: .leading, spacing: 12) {
-                Text("重命名对话").font(.system(size: 14, weight: .semibold))
+                Text("重命名对话").font(.system(size: fs(14), weight: .semibold))
                 TextField("对话名称", text: $newName).textFieldStyle(.roundedBorder).frame(width: 300)
                     .onSubmit { app.rename(row, to: newName); renaming = nil }
                 HStack {
@@ -110,10 +111,10 @@ struct Sidebar: View {
             if collapsed.contains(w.cwd) { collapsed.remove(w.cwd) } else { collapsed.insert(w.cwd) }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: isCollapsed ? "folder" : "folder.fill").font(.system(size: 12)).foregroundStyle(T.accent)
-                Text(w.name).font(.system(size: 13, weight: .medium)).foregroundStyle(T.ink).lineLimit(1)
+                Image(systemName: isCollapsed ? "folder" : "folder.fill").font(.system(size: fs(12))).foregroundStyle(T.accent)
+                Text(w.name).font(.system(size: fs(13), weight: .medium)).foregroundStyle(T.ink).lineLimit(1)
                 Spacer()
-                Button { app.newSession(cwd: w.cwd) } label: { Image(systemName: "plus").font(.system(size: 11)) }
+                Button { app.newSession(cwd: w.cwd) } label: { Image(systemName: "plus").font(.system(size: fs(11))) }
                     .buttonStyle(.plain).foregroundStyle(T.muted).help("在这个文件夹开新会话")
             }
             .padding(.horizontal, 8).padding(.vertical, 6).contentShape(Rectangle())
@@ -198,9 +199,9 @@ struct SidebarRowLabel: View {
     var body: some View {
         HStack(spacing: 6) {
             if let dot { Circle().fill(dot).frame(width: 6, height: 6) }
-            Text(title).font(.system(size: 13, weight: selected ? .medium : .regular)).foregroundStyle(T.ink).lineLimit(1)
+            Text(title).font(.system(size: fs(13), weight: selected ? .medium : .regular)).foregroundStyle(T.ink).lineLimit(1)
             Spacer(minLength: 4)
-            Text(time).font(.system(size: 11)).foregroundStyle(T.muted)
+            Text(time).font(.system(size: fs(11))).foregroundStyle(T.muted)
         }
         .padding(.leading, 28).padding(.trailing, 8).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? T.line.opacity(0.9) : hover ? T.line.opacity(0.45) : Color.clear))
@@ -223,17 +224,17 @@ struct UsageCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("今日花费").font(.system(size: 12, weight: .medium)).foregroundStyle(T.ink)
+                Text("今日花费").font(.system(size: fs(12), weight: .medium)).foregroundStyle(T.ink)
                 Spacer()
-                Text(String(format: "$%.2f", usage.todayCost)).font(.system(size: 12, weight: .medium)).foregroundStyle(T.ink)
+                Text(String(format: "$%.2f", usage.todayCost)).font(.system(size: fs(12), weight: .medium)).foregroundStyle(T.ink)
             }
             meter("5 小时额度", usage.fiveHour)
             meter("本周额度", usage.sevenDay)
             if let r = usage.fiveHourReset, r > Date() {
-                Text("5 小时额度 \(r.formatted(date: .omitted, time: .shortened)) 重置").font(.system(size: 11)).foregroundStyle(T.muted)
+                Text("5 小时额度 \(r.formatted(date: .omitted, time: .shortened)) 重置").font(.system(size: fs(11))).foregroundStyle(T.muted)
             }
             if usage.fiveHour == nil {
-                Text("发出第一条消息后显示额度").font(.system(size: 11)).foregroundStyle(T.muted)
+                Text("发出第一条消息后显示额度").font(.system(size: fs(11))).foregroundStyle(T.muted)
             }
         }
         .padding(12)
@@ -245,9 +246,9 @@ struct UsageCard: View {
         if let v {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(label).font(.system(size: 11)).foregroundStyle(T.muted)
+                    Text(label).font(.system(size: fs(11))).foregroundStyle(T.muted)
                     Spacer()
-                    Text("已用 \(Int((v * 100).rounded()))%").font(.system(size: 11)).foregroundStyle(v > 0.8 ? T.err : T.muted)
+                    Text("已用 \(Int((v * 100).rounded()))%").font(.system(size: fs(11))).foregroundStyle(v > 0.8 ? T.err : T.muted)
                 }
                 GeometryReader { g in
                     ZStack(alignment: .leading) {
@@ -268,8 +269,8 @@ struct TrashButton: View {
     var body: some View {
         Button { app.showTrash = true } label: {
             HStack(spacing: 4) {
-                Image(systemName: store.entries.isEmpty ? "trash" : "trash.fill").font(.system(size: 12))
-                if !store.entries.isEmpty { Text("\(store.entries.count)").font(.system(size: 11)) }
+                Image(systemName: store.entries.isEmpty ? "trash" : "trash.fill").font(.system(size: fs(12)))
+                if !store.entries.isEmpty { Text("\(store.entries.count)").font(.system(size: fs(11))) }
             }
             .foregroundStyle(T.muted)
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -277,5 +278,22 @@ struct TrashButton: View {
         }
         .buttonStyle(.plain)
         .help("废纸篓：删除的对话可以在这里恢复")
+    }
+}
+
+/// 直接在 dmg 里打开时的提示：不移进「应用程序」就没法自动更新
+struct InstallLocationBanner: View {
+    @EnvironmentObject var app: AppState
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("现在是从安装包里直接打开的").font(.system(size: fs(13), weight: .semibold)).foregroundStyle(T.ink)
+            Text("这样没法自动更新。移到「应用程序」后，以后从那里打开就行。").font(.system(size: fs(12))).foregroundStyle(T.ink.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack { Spacer(); Button("移到应用程序并重启") { Updater.shared.moveToApplications(app: app) }.buttonStyle(PrimaryButton()) }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(T.run.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(T.run.opacity(0.4), lineWidth: 1))
     }
 }

@@ -69,7 +69,7 @@ struct SettingsRoot: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(section.label).font(.system(size: 18, weight: .semibold)).foregroundStyle(T.ink)
+                    Text(section.label).font(.system(size: fs(18), weight: .semibold)).foregroundStyle(T.ink)
                     Text("当前项目：" + project.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
                         .font(T.small).foregroundStyle(T.muted).lineLimit(1).truncationMode(.middle)
                 }
@@ -121,9 +121,9 @@ struct SettingsNavRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Image(systemName: section.icon).font(.system(size: 13)).frame(width: 18)
+                Image(systemName: section.icon).font(.system(size: fs(13))).frame(width: 18)
                     .foregroundStyle(selected ? T.onAccent : T.muted)
-                Text(section.label).font(.system(size: 13)).foregroundStyle(selected ? T.onAccent : T.ink).lineLimit(1)
+                Text(section.label).font(.system(size: fs(13))).foregroundStyle(selected ? T.onAccent : T.ink).lineLimit(1)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
@@ -411,7 +411,7 @@ struct PluginSettings: View {
                 ForEach(plugins) { p in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(p.name).font(.system(size: 13, weight: .medium))
+                            Text(p.name).font(.system(size: fs(13), weight: .medium))
                             Text("\(p.marketplace) · \(p.version)").font(T.small).foregroundStyle(T.muted)
                         }
                         Spacer()
@@ -421,7 +421,7 @@ struct PluginSettings: View {
                             Divider()
                             Button("卸载", role: .destructive) { cli(["plugin", "uninstall", p.key]) }
                         } label: {
-                            Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(T.muted)
+                            Image(systemName: "ellipsis.circle").font(.system(size: fs(14))).foregroundStyle(T.muted)
                         }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("更新、查看或卸载")
                         Toggle("", isOn: Binding(
@@ -440,7 +440,7 @@ struct PluginSettings: View {
             Section("插件市场（\(markets.count)）") {
                 ForEach(markets, id: \.name) { m in
                     HStack {
-                        Text(m.name).font(.system(size: 13, weight: .medium))
+                        Text(m.name).font(.system(size: fs(13), weight: .medium))
                         Text(m.source).font(T.small).foregroundStyle(T.muted).lineLimit(1)
                         Spacer()
                         Button("更新") { cli(["plugin", "marketplace", "update", m.name]) }.disabled(running)
@@ -503,7 +503,7 @@ struct MCPSettings: View {
                         Circle().fill(s.status.contains("✔") ? T.ok : s.status.contains("!") ? T.run : T.err)
                             .frame(width: 7, height: 7).padding(.top, 5)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(s.name).font(.system(size: 13, weight: .medium))
+                            Text(s.name).font(.system(size: fs(13), weight: .medium))
                             Text(s.target).font(T.small).foregroundStyle(T.muted).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                         }
                         Spacer()
@@ -592,7 +592,7 @@ struct SkillList: View {
                     ForEach(groups[g]!) { s in
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(s.name).font(.system(size: 13, weight: .medium))
+                                Text(s.name).font(.system(size: fs(13), weight: .medium))
                                 Text(s.description).font(T.small).foregroundStyle(T.muted).lineLimit(2)
                             }
                             Spacer()
@@ -698,7 +698,7 @@ struct FileEditor: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             Divider()
-            TextEditor(text: $text).font(.system(size: 13, design: .monospaced)).scrollContentBackground(.hidden)
+            TextEditor(text: $text).font(.system(size: fs(13), design: .monospaced)).scrollContentBackground(.hidden)
                 .padding(8).background(T.paper)
         }
         .onAppear {
@@ -849,7 +849,7 @@ struct MemoryFiles: View {
             List(entries, id: \.1, selection: $selected) { e in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(e.0).lineLimit(1)
-                    if !FileManager.default.fileExists(atPath: e.1.path) { Text("还没有，编辑后保存即创建").font(.system(size: 10)).foregroundStyle(T.muted) }
+                    if !FileManager.default.fileExists(atPath: e.1.path) { Text("还没有，编辑后保存即创建").font(.system(size: fs(10))).foregroundStyle(T.muted) }
                 }
                 .tag(e.1)
             }
@@ -878,7 +878,7 @@ struct RawSettings: View {
         VStack(alignment: .leading, spacing: 8) {
             ScopePicker(scope: $scope, project: project)
             Text("所有配置项都能在这里直接改。保存前会检查格式，并自动备份原文件。").font(T.small).foregroundStyle(T.muted)
-            TextEditor(text: $text).font(.system(size: 12, design: .monospaced)).scrollContentBackground(.hidden)
+            TextEditor(text: $text).font(.system(size: fs(12), design: .monospaced)).scrollContentBackground(.hidden)
                 .padding(6).background(RoundedRectangle(cornerRadius: 8).fill(T.sunk))
             HStack {
                 Text(msg).font(T.small).foregroundStyle(msg.hasPrefix("已") ? T.ok : T.err)

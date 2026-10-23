@@ -37,7 +37,7 @@ struct ChatView: View {
             if dropping {
                 RoundedRectangle(cornerRadius: 14).stroke(T.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
                     .background(RoundedRectangle(cornerRadius: 14).fill(T.accentSoft.opacity(0.5)))
-                    .overlay(Label("松手添加为附件", systemImage: "paperclip").font(.system(size: 15, weight: .medium)).foregroundStyle(T.accent))
+                    .overlay(Label("松手添加为附件", systemImage: "paperclip").font(.system(size: fs(15), weight: .medium)).foregroundStyle(T.accent))
                     .padding(12).allowsHitTesting(false)
             }
         }
@@ -55,7 +55,7 @@ struct EmptyChat: View {
         VStack(spacing: 18) {
             Spacer()
             Text("想让 Claude 做点什么？")
-                .font(.system(size: 26, weight: .semibold))
+                .font(.system(size: fs(26), weight: .semibold))
                 .foregroundStyle(T.ink)
             HStack(spacing: 10) {
                 Button { app.pickFolder(for: session) } label: {
@@ -150,7 +150,7 @@ struct Transcript: View {
             .overlay(alignment: .bottom) {
                 if !atBottom {
                     Button { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } } label: {
-                        Image(systemName: "arrow.down").font(.system(size: 13, weight: .bold)).foregroundStyle(T.ink)
+                        Image(systemName: "arrow.down").font(.system(size: fs(13), weight: .bold)).foregroundStyle(T.ink)
                             .frame(width: 34, height: 34)
                             .background(Circle().fill(T.paper))
                             .overlay(Circle().stroke(T.line, lineWidth: 1))
@@ -208,13 +208,13 @@ struct StepGroup: View {
             Rail(node: failed > 0 ? T.err : T.muted, spinning: running) {
                 Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                     HStack(spacing: 6) {
-                        Text("执行了 \(tools) 个步骤").font(.system(size: 13, weight: .medium)).foregroundStyle(T.ink.opacity(0.78))
+                        Text("执行了 \(tools) 个步骤").font(.system(size: fs(13), weight: .medium)).foregroundStyle(T.ink.opacity(0.78))
                         if failed > 0 { Text("\(failed) 个出错").font(T.small).foregroundStyle(T.err) }
                         if !open {
                             Text(running ? "正在：" + last.text : "最后：" + last.text).font(T.small).foregroundStyle(T.muted)
                                 .lineLimit(1).truncationMode(.tail)
                         }
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "chevron.right").font(.system(size: fs(9), weight: .semibold))
                             .foregroundStyle(T.muted).rotationEffect(.degrees(open ? 90 : 0))
                     }
                     .contentShape(Rectangle())
@@ -367,9 +367,9 @@ struct ArtifactsBlock: View {
                 Button { showAll = true } label: {
                     HStack(spacing: 4) {
                         Text(arts.count > 3 && total == arts.count ? "还有 \(arts.count - 3) 个，查看全部产物（\(total)）" : "查看所有产物（\(total)）")
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "chevron.right").font(.system(size: fs(10), weight: .semibold))
                     }
-                    .font(.system(size: 13)).foregroundStyle(T.muted).contentShape(Rectangle())
+                    .font(.system(size: fs(13))).foregroundStyle(T.muted).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .popover(isPresented: $showAll, arrowEdge: .bottom) { AllArtifacts(artifacts: all) }
@@ -383,7 +383,7 @@ struct AllArtifacts: View {
     let artifacts: [Artifact]
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("这个对话的所有产物（\(artifacts.count)）").font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
+            Text("这个对话的所有产物（\(artifacts.count)）").font(.system(size: fs(14), weight: .semibold)).foregroundStyle(T.ink)
             ScrollView {
                 VStack(spacing: 8) { ForEach(artifacts, id: \.self) { ArtifactCard(artifact: $0) } }
             }
@@ -416,9 +416,9 @@ struct ThinkingRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Button { withAnimation(.easeOut(duration: 0.15)) { open = !isOpen } } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "brain").font(.system(size: 11)).foregroundStyle(T.muted)
-                        Text(label).font(.system(size: 13)).foregroundStyle(T.muted)
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "brain").font(.system(size: fs(11))).foregroundStyle(T.muted)
+                        Text(label).font(.system(size: fs(13))).foregroundStyle(T.muted)
+                        Image(systemName: "chevron.right").font(.system(size: fs(9), weight: .semibold))
                             .foregroundStyle(T.muted).rotationEffect(.degrees(isOpen ? 90 : 0))
                     }
                     .contentShape(Rectangle())
@@ -428,7 +428,7 @@ struct ThinkingRow: View {
                 if isOpen {
                     Group {
                         if hasText {
-                            Text(item.text).font(.system(size: 13)).foregroundStyle(T.muted).lineSpacing(3)
+                            Text(item.text).font(.system(size: fs(13))).foregroundStyle(T.muted).lineSpacing(3)
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         } else {
                             Text(item.streaming ? "Claude 正在想……" : "这次的思考内容没有返回，只记录了用时。")
@@ -490,13 +490,13 @@ struct ToolRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                     HStack(spacing: 6) {
-                        Text(item.text).font(.system(size: 13)).foregroundStyle(item.toolState == .failed ? T.err : T.ink.opacity(0.78))
+                        Text(item.text).font(.system(size: fs(13))).foregroundStyle(item.toolState == .failed ? T.err : T.ink.opacity(0.78))
                             .lineLimit(1).truncationMode(.middle)
                         if item.subSteps > 0 {
                             Text("\(item.subSteps) 步" + (item.subLatest.isEmpty ? "" : "，最近：\(item.subLatest)"))
                                 .font(T.small).foregroundStyle(T.muted).lineLimit(1)
                         }
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "chevron.right").font(.system(size: fs(9), weight: .semibold))
                             .foregroundStyle(T.muted).rotationEffect(.degrees(open ? 90 : 0))
                     }
                     .contentShape(Rectangle())
