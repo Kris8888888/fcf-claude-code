@@ -2,11 +2,12 @@ import SwiftUI
 import AppKit
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, appearance, permissions, env, plugins, mcp, skills, agents, commands, hooks, memory, raw, diagnose
+    case general, thinking, appearance, permissions, env, plugins, mcp, skills, agents, commands, hooks, memory, raw, diagnose
     var id: String { rawValue }
     var label: String {
         switch self {
         case .general: return "通用"
+        case .thinking: return "思维链"
         case .appearance: return "外观主题"
         case .permissions: return "权限"
         case .env: return "环境变量"
@@ -24,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .thinking: return "brain"
         case .appearance: return "paintpalette"
         case .permissions: return "checkmark.shield"
         case .env: return "terminal"
@@ -78,6 +80,7 @@ struct SettingsRoot: View {
                 Group {
                     switch section {
                     case .general: GeneralSettings(project: project)
+                    case .thinking: ThinkingSettings(project: project)
                     case .appearance: ThemeSettings()
                     case .permissions: PermissionSettings(project: project)
                     case .env: EnvSettings(project: project)
@@ -164,7 +167,6 @@ struct GeneralSettings: View {
                     TextPicker(label: "默认模型", value: f.value(["model"]) as? String ?? "",
                                options: ["", "opus", "sonnet", "haiku", "opusplan"],
                                names: ["跟随默认", "Opus", "Sonnet", "Haiku", "计划用 Opus、执行用 Sonnet"]) { f.set(["model"], $0.isEmpty ? nil : $0) }
-                    BoolRow(label: "默认开启深度思考", key: ["alwaysThinkingEnabled"], file: f)
                     StringRow(label: "回复语言", hint: "例如：简体中文。留空跟随默认", key: ["language"], file: f)
                     TextPicker(label: "输出风格", value: f.value(["outputStyle"]) as? String ?? "",
                                options: [""] + OutputStyles.all, names: ["默认"] + OutputStyles.all) { f.set(["outputStyle"], $0.isEmpty ? nil : $0) }

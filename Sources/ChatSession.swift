@@ -32,6 +32,7 @@ final class ChatSession: ObservableObject, Identifiable {
     private var proc: ClaudeProcess?
     private var streamingItem: ChatItem?
     private var thinkingItem: ChatItem?
+    private var startedDisplay: String?     // 后台进程启动时用的思考显示方式，设置改了就在空闲时重启
     private var toolItems: [String: ChatItem] = [:]
     private var bashItems: [(cmd: String, item: ChatItem)] = []
     private var reqSeq = 0
@@ -77,8 +78,12 @@ final class ChatSession: ObservableObject, Identifiable {
         p.onExit = { [weak self] code, tail in self?.processExited(code: code, output: tail) }
         do {
             // 用户手动选过模式才传参数，否则跟随各层 settings.json
+            // 后台模式默认不返回思考内容，按「设置 → 思维链」决定要不要
+            let disp = ThinkingPrefs.cliDisplay(cwd: cwd)
             try p.start(cwd: cwd, resume: sessionId, model: model.rawValue,
-                        permissionMode: modeExplicit ? mode.rawValue : nil, addDirs: extraDirs)
+                        permissionMode: modeExplicit ? mode.rawValue : nil, addDirs: extraDirs,
+                        extraArgs: disp.map { ["--thinking-display", $0] } ?? [])
+            startedDisplay = disp
             proc = p
             started = true
             costUSD = 0   // 新进程的花费从零累计
@@ -169,6 +174,9 @@ final class ChatSession: ObservableObject, Identifiable {
             runBash(String(text.dropFirst()).trimmingCharacters(in: .whitespaces))
             return
         }
+
+        // 「思维链」设置改过：后台空闲时先重启（带 --resume 接着这个对话），新设置才生效
+        if proc != nil, !busy, sessionId != nil, ThinkingPrefs.cliDisplay(cwd: cwd) != startedDisplay { restart() }
 
         let shown = ChatItem(.user, text)
         shown.images = images

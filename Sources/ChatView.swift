@@ -449,7 +449,11 @@ struct ThinkingRow: View {
 
     var hasText: Bool { !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     // 没手动点过时：思考中展开，结束后自动收起
-    var isOpen: Bool { open ?? item.streaming }
+    @AppStorage("thinkingExpand") private var expand = "auto"
+    var isOpen: Bool {
+        if let open { return open }
+        switch expand { case "collapsed": return false; case "expanded": return true; default: return item.streaming }
+    }
 
     var label: String {
         if item.streaming { return "思考中…" }
@@ -477,7 +481,7 @@ struct ThinkingRow: View {
                             Text(item.text).font(.system(size: fs(13))).foregroundStyle(T.muted).lineSpacing(3)
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         } else {
-                            Text(item.streaming ? "Claude 正在想……" : "这次的思考内容没有返回，只记录了用时。")
+                            Text(item.streaming ? "Claude 正在想……" : "这次的思考内容没有显示，只记录了用时。想看思考内容，到「设置 → 思维链」选「显示思考摘要」。")
                                 .font(T.small).foregroundStyle(T.muted.opacity(0.8))
                         }
                     }
