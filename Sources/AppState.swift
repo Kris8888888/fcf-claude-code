@@ -65,6 +65,7 @@ final class AppState: ObservableObject {
     @Published var search = ""
     @Published var searchFocusToken = 0
     @Published var statusPanel: StatusTab?      // 状态与统计面板
+    @Published var showTrash = false
     /// 置顶的会话 ID，先置顶的在前
     @Published var pinned: [String] = UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? []
     @Published var customTitles: [String: String] = UserDefaults.standard.dictionary(forKey: "customTitles") as? [String: String] ?? [:]
@@ -191,6 +192,8 @@ final class AppState: ObservableObject {
         guard let h = row.entry else { return }
         if let s = sessions.first(where: { $0.sessionId == h.sessionId }) { selected = s.id; return }
         let s = ChatSession(cwd: h.cwd, title: title(for: h.sessionId, fallback: h.title), sessionId: h.sessionId)
+        // 只是点开看：沿用记录文件的最后修改时间，列表里的位置不动；发了新消息才会更新
+        s.lastActive = h.modified
         s.loadHistory(from: h.url)
         add(s)
     }
@@ -210,14 +213,65 @@ final class AppState: ObservableObject {
         UserDefaults.standard.set(customTitles, forKey: "customTitles")
     }
 
-    /// 删除 = 关掉进程 + 把会话记录文件移到废纸篓（可以从废纸篓找回）
+    /// 删除 = 关掉后台进程 + 把会话记录移进 App 的废纸篓（可以恢复，到期自动清除）
     func delete(_ row: SidebarRow) {
-        let sid = row.live?.sessionId ?? row.entry?.sessionId
+        let sid = row.sessionId
         if let s = row.live ?? sessions.first(where: { $0.sessionId != nil && $0.sessionId == sid }) { close(s, refresh: false) }
-        if let sid, let url = fileURL(for: sid) { try? FileManager.default.trashItem(at: url, resultingItemURL: nil) }
-        if let sid { history.removeAll { $0.sessionId == sid } }
-        if let sid, pinned.contains(sid) { pinned.removeAll { $0 == sid }; UserDefaults.standard.set(pinned, forKey: "pinnedSessions") }
+        guard let sid else { refreshHistory(); return }     // 还没发过消息的空对话，关掉就行
+        let wasPinned = pinned.contains(sid)
+        if let url = fileURL(for: sid) {
+            do {
+                try TrashStore.shared.add(sessionId: sid, file: url, title: row.title, cwd: row.cwd,
+                                          wasPinned: wasPinned, customTitle: customTitles[sid])
+                showToast("已移到废纸篓：\(row.title)", undo: { [weak self] in
+                    if let e = TrashStore.shared.entries.first(where: { $0.sessionId == sid }) { self?.restore(e) }
+                })
+            } catch {
+                showToast("删除失败：\(error.localizedDescription)")
+                return
+            }
+        }
+        history.removeAll { $0.sessionId == sid }
+        if wasPinned { pinned.removeAll { $0 == sid }; UserDefaults.standard.set(pinned, forKey: "pinnedSessions") }
         refreshHistory()
+    }
+
+    /// 从废纸篓恢复：放回原位置，原来置顶的恢复置顶
+    @discardableResult
+    func restore(_ e: TrashEntry) -> Bool {
+        do {
+            try TrashStore.shared.restore(e)
+        } catch {
+            showToast("恢复失败：\(error.localizedDescription)")
+            return false
+        }
+        if e.wasPinned, !pinned.contains(e.sessionId) {
+            pinned.insert(e.sessionId, at: 0)
+            UserDefaults.standard.set(pinned, forKey: "pinnedSessions")
+        }
+        if let t = e.customTitle { customTitles[e.sessionId] = t; UserDefaults.standard.set(customTitles, forKey: "customTitles") }
+        refreshHistory()
+        showToast("已恢复：\(e.title)")
+        return true
+    }
+
+    /// 彻底删除时顺手清掉它的自定义标题
+    func purge(_ e: TrashEntry) {
+        TrashStore.shared.purge(e)
+        if customTitles[e.sessionId] != nil { customTitles[e.sessionId] = nil; UserDefaults.standard.set(customTitles, forKey: "customTitles") }
+    }
+
+    // MARK: 底部提示条（带撤销）
+
+    struct Toast: Identifiable { let id = UUID(); let text: String; let undo: (() -> Void)? }
+    @Published var toast: Toast?
+
+    func showToast(_ text: String, undo: (() -> Void)? = nil) {
+        let t = Toast(text: text, undo: undo)
+        toast = t
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            if self?.toast?.id == t.id { self?.toast = nil }
+        }
     }
 
     func fileURL(for sessionId: String) -> URL? {

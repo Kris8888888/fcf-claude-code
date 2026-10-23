@@ -112,40 +112,8 @@ final class MDCache {
 struct MarkdownView: View {
     let text: String
     var body: some View {
-        // 解析结果按文本缓存：滚动、重绘时不重复解析
-        let blocks = MDCache.blocks(text)
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in block(b) }
-        }
-        .textSelection(.enabled)
-    }
-
-    @ViewBuilder func block(_ b: MDBlock) -> some View {
-        switch b {
-        case .heading(let lv, let s):
-            Text(MarkdownParser.inline(s))
-                .font(.system(size: lv <= 1 ? 19 : lv == 2 ? 17 : 15, weight: .semibold))
-                .padding(.top, 4)
-        case .paragraph(let s):
-            Text(MarkdownParser.inline(s)).font(T.body).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
-        case .bullet(let s, let lv, let n):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(n.map { "\($0)." } ?? "•").font(T.body).foregroundStyle(T.muted).frame(minWidth: 14, alignment: .trailing)
-                Text(MarkdownParser.inline(s)).font(T.body).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, CGFloat(lv) * 18)
-        case .quote(let s):
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 1).fill(T.line).frame(width: 3)
-                Text(MarkdownParser.inline(s)).font(T.body).foregroundStyle(T.muted).fixedSize(horizontal: false, vertical: true)
-            }
-        case .code(let lang, let code):
-            CodeBlock(lang: lang, code: code)
-        case .table(let rows):
-            TableBlock(rows: rows)
-        case .rule:
-            Rectangle().fill(T.line).frame(height: 1)
-        }
+        // 整段回复排成一个可选中的富文本，能跨段落、跨列表、跨表格拖选复制
+        SelectableText(attr: MarkdownAttr.cached(text))
     }
 }
 

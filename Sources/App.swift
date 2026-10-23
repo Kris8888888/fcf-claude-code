@@ -42,6 +42,8 @@ struct DuihuataiApp: App {
                 Divider()
                 Button("重新进行启动检查（FCF）") { gate.runChecks() }
                 Button("关闭当前对话") { if let s = app.current { app.close(s) } }.keyboardShortcut("w", modifiers: [.command, .shift])
+                Button("废纸篓") { app.showTrash = true }
+                Button("检查更新…") { Updater.shared.check(manual: true) }
             }
         }
 
@@ -59,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 后台进程意外退出时写管道不能把整个 App 带崩
         signal(SIGPIPE, SIG_IGN)
         ThemeStore.shared.applyAppearance()
+        Updater.shared.start()
         // 提前在后台取好登录环境，第一条消息不用等
         DispatchQueue.global().async { _ = LoginEnv.shared }
     }
@@ -84,6 +87,10 @@ struct RootView: View {
             // 仅用于截图验证：DUIHUATAI_STATUS_DEMO=status|usage|stats
             if let t = ProcessInfo.processInfo.environment["DUIHUATAI_STATUS_DEMO"], let tab = StatusTab(rawValue: t) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { app.statusPanel = tab }
+            }
+            // 仅用于截图验证：DUIHUATAI_TRASH_DEMO=1 自动打开废纸篓
+            if ProcessInfo.processInfo.environment["DUIHUATAI_TRASH_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { app.showTrash = true }
             }
         }
     }

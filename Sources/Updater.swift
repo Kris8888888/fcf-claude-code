@@ -1,0 +1,264 @@
+import SwiftUI
+import AppKit
+
+/// 从 GitHub Release 检查新版本、下载并替换自己，然后重启
+final class Updater: ObservableObject {
+    static let shared = Updater()
+    static let repo = "Kris8888888/fcf-claude-code"
+
+    struct Release: Equatable {
+        let tag: String
+        let version: String
+        let notes: String
+        let zipName: String
+        let zipURL: String
+        let page: String
+    }
+
+    enum State: Equatable {
+        case idle, checking, upToDate, available(Release), downloading(Release), installing, failed(String)
+    }
+
+    @Published var state: State = .idle
+    @Published var dismissedVersion = UserDefaults.standard.string(forKey: "dismissedUpdate")
+    private var timer: Timer?
+
+    var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
+
+    /// 启动后 5 秒查一次，之后每 6 小时查一次
+    func start() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.check(manual: false) }
+        timer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in self?.check(manual: false) }
+    }
+
+    static var ghPath: String? {
+        let candidates = [NSString(string: "~/.local/bin/gh").expandingTildeInPath, "/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
+            + (LoginEnv.shared["PATH"] ?? "").split(separator: ":").map { "\($0)/gh" }
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    func check(manual: Bool) {
+        switch state { case .checking, .downloading, .installing: return; default: break }
+        state = .checking
+        DispatchQueue.global(qos: .utility).async {
+            let result = Self.fetchLatest()
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let r):
+                    if Self.newer(r.version, than: self.current) {
+                        // 自动检查时，用户点过「这个版本先不更新」就不再打扰；手动检查总是显示
+                        self.state = (!manual && self.dismissedVersion == r.version) ? .idle : .available(r)
+                        // 仅用于测试更新流程：DUIHUATAI_AUTOUPDATE=1 发现新版直接装
+                        if ProcessInfo.processInfo.environment["DUIHUATAI_AUTOUPDATE"] != nil { self.install(r, app: nil) }
+                    } else {
+                        self.state = manual ? .upToDate : .idle
+                        if manual { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if self.state == .upToDate { self.state = .idle } } }
+                    }
+                case .failure(let e):
+                    self.state = manual ? .failed(e.localizedDescription) : .idle
+                }
+            }
+        }
+    }
+
+    struct UpdateError: LocalizedError { let msg: String; var errorDescription: String? { msg } }
+
+    /// 私有仓库用本机已登录的 gh 读；没有 gh 时按公开仓库匿名读
+    static func fetchLatest() -> Result<Release, Error> {
+        var json: [String: Any]?
+        if let gh = ghPath {
+            let r = Shell.run(gh, ["api", "repos/\(repo)/releases/latest"], timeout: 20)
+            if r.code == 0, let d = r.output.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
+        }
+        if json == nil, let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") {
+            let sem = DispatchSemaphore(value: 0)
+            var req = URLRequest(url: url, timeoutInterval: 20)
+            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            URLSession.shared.dataTask(with: req) { d, _, _ in
+                if let d { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
+                sem.signal()
+            }.resume()
+            _ = sem.wait(timeout: .now() + 25)
+        }
+        guard let j = json, let tag = j["tag_name"] as? String else {
+            return .failure(UpdateError(msg: ghPath == nil ? "读不到版本信息：仓库是私有的，需要本机装好并登录 gh" : "读不到版本信息，检查网络或 gh 登录状态"))
+        }
+        let assets = (j["assets"] as? [[String: Any]]) ?? []
+        guard let zip = assets.first(where: { ($0["name"] as? String)?.hasSuffix(".zip") == true }),
+              let name = zip["name"] as? String else {
+            return .failure(UpdateError(msg: "新版本 \(tag) 里没有安装包"))
+        }
+        let ver = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        return .success(Release(tag: tag, version: ver, notes: j["body"] as? String ?? "", zipName: name,
+                                zipURL: zip["browser_download_url"] as? String ?? "", page: j["html_url"] as? String ?? ""))
+    }
+
+    static func newer(_ a: String, than b: String) -> Bool { LaunchGate.newer(a, than: b) }
+
+    func skip(_ r: Release) {
+        dismissedVersion = r.version
+        UserDefaults.standard.set(r.version, forKey: "dismissedUpdate")
+        state = .idle
+    }
+
+    // MARK: 下载 → 校验 → 替换 → 重启
+
+    func install(_ r: Release, app: AppState?) {
+        state = .downloading(r)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let newApp = try Self.download(r)
+                DispatchQueue.main.async {
+                    self.state = .installing
+                    do {
+                        try Self.replaceAndRelaunch(with: newApp)
+                        app?.shutdownAll()
+                        NSApp.terminate(nil)
+                    } catch {
+                        self.state = .failed(error.localizedDescription)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { self.state = .failed(error.localizedDescription) }
+            }
+        }
+    }
+
+    static func download(_ r: Release) throws -> URL {
+        let fm = FileManager.default
+        let work = fm.temporaryDirectory.appendingPathComponent("duihuatai-update-\(UUID().uuidString)")
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        let zip = work.appendingPathComponent(r.zipName)
+        if let gh = ghPath {
+            let res = Shell.run(gh, ["release", "download", r.tag, "--repo", repo, "--pattern", r.zipName, "--dir", work.path, "--clobber"], timeout: 300)
+            if res.code != 0 { try? fm.removeItem(at: zip) }
+        }
+        if !fm.fileExists(atPath: zip.path), let u = URL(string: r.zipURL) {
+            let d = try Data(contentsOf: u)
+            try d.write(to: zip)
+        }
+        guard fm.fileExists(atPath: zip.path) else { throw UpdateError(msg: "下载失败，检查网络或 gh 登录状态") }
+        let out = work.appendingPathComponent("unzipped")
+        let unzip = Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path], timeout: 120)
+        guard unzip.code == 0 else { throw UpdateError(msg: "解压失败：\(unzip.output)") }
+        guard let appName = (try fm.contentsOfDirectory(atPath: out.path)).first(where: { $0.hasSuffix(".app") }) else {
+            throw UpdateError(msg: "安装包里没有找到 App")
+        }
+        let newApp = out.appendingPathComponent(appName)
+        // 必须是同一个 App，版本号也要对得上，防止装错
+        let info = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist"))
+        guard info?["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier else { throw UpdateError(msg: "安装包不是这个 App，已停止") }
+        guard info?["CFBundleShortVersionString"] as? String == r.version else { throw UpdateError(msg: "安装包版本和发布版本不一致，已停止") }
+        let sig = Shell.run("/usr/bin/codesign", ["--verify", "--deep", newApp.path], timeout: 60)
+        guard sig.code == 0 else { throw UpdateError(msg: "安装包签名校验没通过：\(sig.output)") }
+        _ = Shell.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path], timeout: 30)
+        return newApp
+    }
+
+    /// 写一个小脚本：等当前 App 退出 → 换上新版（失败就还原旧版）→ 重新打开
+    static func replaceAndRelaunch(with newApp: URL) throws {
+        let target = Bundle.main.bundlePath
+        guard FileManager.default.isWritableFile(atPath: (target as NSString).deletingLastPathComponent) else {
+            throw UpdateError(msg: "没有权限写入 \((target as NSString).deletingLastPathComponent)")
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let script = newApp.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("install.sh")
+        func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let body = """
+        #!/bin/bash
+        for i in $(seq 1 100); do kill -0 \(pid) 2>/dev/null || break; sleep 0.2; done
+        T=\(q(target))
+        rm -rf "$T.old"
+        if mv "$T" "$T.old" && /usr/bin/ditto \(q(newApp.path)) "$T"; then
+          rm -rf "$T.old"
+        else
+          rm -rf "$T"; mv "$T.old" "$T"
+        fi
+        open "$T"
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", "nohup /bin/bash \(q(script.path)) >/dev/null 2>&1 &"]
+        try p.run()
+        p.waitUntilExit()
+    }
+}
+
+// MARK: 侧栏里的更新卡片（只在有事可说时出现）
+
+struct UpdateBanner: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var up = Updater.shared
+    @State private var showNotes = false
+    @State private var confirmBusy = false
+
+    var body: some View {
+        switch up.state {
+        case .available(let r):
+            card {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("新版本 \(r.version)").font(.system(size: 13, weight: .semibold)).foregroundStyle(T.ink)
+                    Text("当前 \(up.current)").font(.system(size: 11)).foregroundStyle(T.muted)
+                    Spacer()
+                    Button { up.skip(r) } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                        .buttonStyle(.plain).foregroundStyle(T.muted).help("这个版本先不更新")
+                }
+                HStack(spacing: 10) {
+                    Button("更新内容") { showNotes = true }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(T.accent)
+                        .popover(isPresented: $showNotes) { notes(r) }
+                    Spacer()
+                    Button("更新并重启") {
+                        if app.sessions.contains(where: { $0.busy }) { confirmBusy = true } else { up.install(r, app: app) }
+                    }
+                    .buttonStyle(PrimaryButton())
+                }
+            }
+            .alert("有对话正在进行", isPresented: $confirmBusy) {
+                Button("仍然更新") { up.install(r, app: app) }
+                Button("稍后", role: .cancel) {}
+            } message: { Text("更新会重启 App，进行中的回复会被中断，对话记录都会保留。") }
+        case .downloading(let r):
+            card {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在下载 \(r.version)…").font(.system(size: 12)).foregroundStyle(T.ink)
+                }
+            }
+        case .installing:
+            card { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在安装，马上重启…").font(.system(size: 12)).foregroundStyle(T.ink) } }
+        case .checking:
+            EmptyView()
+        case .upToDate:
+            card { Label("已经是最新版本 \(up.current)", systemImage: "checkmark.circle").font(.system(size: 12)).foregroundStyle(T.ok) }
+        case .failed(let msg):
+            card {
+                HStack(alignment: .top) {
+                    Text("更新没成功：" + msg).font(.system(size: 12)).foregroundStyle(T.err).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button { up.state = .idle } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                        .buttonStyle(.plain).foregroundStyle(T.muted)
+                }
+                Button("重试") { up.check(manual: true) }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(T.accent)
+            }
+        case .idle:
+            EmptyView()
+        }
+    }
+
+    func card<C: View>(@ViewBuilder _ c: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 8) { c() }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(T.accentSoft))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(T.accent.opacity(0.35), lineWidth: 1))
+    }
+
+    func notes(_ r: Updater.Release) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(r.version) 更新内容").font(.system(size: 14, weight: .semibold)).foregroundStyle(T.ink)
+            ScrollView { MarkdownView(text: r.notes.isEmpty ? "这个版本没有写更新说明。" : r.notes) }.frame(maxHeight: 320)
+        }
+        .padding(16).frame(width: 380)
+    }
+}

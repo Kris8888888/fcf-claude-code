@@ -7,7 +7,6 @@ struct Sidebar: View {
     @State private var collapsed: Set<String> = []
     @State private var renaming: SidebarRow?
     @State private var newName = ""
-    @State private var confirmDelete: SidebarRow?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -68,17 +67,23 @@ struct Sidebar: View {
                 .padding(.horizontal, 8).padding(.bottom, 12)
             }
 
+            ToastBar().padding(.horizontal, 10).padding(.top, 8)
+                .animation(.easeOut(duration: 0.2), value: app.toast?.id)
+            UpdateBanner().padding(.horizontal, 10).padding(.top, 8)
             UsageCard().padding(.horizontal, 10).padding(.top, 10)
                 .contentShape(Rectangle())
                 .onTapGesture { app.statusPanel = .usage }
                 .help("点击查看用量与统计（⌘I）")
-            SettingsLink {
-                Label("设置", systemImage: "gearshape").font(.system(size: 13)).foregroundStyle(T.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 10)
-                    .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                SettingsLink {
+                    Label("设置", systemImage: "gearshape").font(.system(size: 13)).foregroundStyle(T.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("模型、权限、插件、MCP、技能、钩子等（⌘,）")
+                TrashButton()
             }
-            .buttonStyle(.plain)
-            .help("模型、权限、插件、MCP、技能、钩子等（⌘,）")
         }
         .background(T.canvas)
         .onChange(of: app.searchFocusToken) { searchFocused = true }
@@ -95,12 +100,7 @@ struct Sidebar: View {
             }
             .padding(20)
         }
-        .alert("删除这个对话？", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
-            Button("删除", role: .destructive) { if let r = confirmDelete { app.delete(r) }; confirmDelete = nil }
-            Button("取消", role: .cancel) { confirmDelete = nil }
-        } message: {
-            Text("会话记录会移到废纸篓，需要的话可以从废纸篓找回。")
-        }
+        .sheet(isPresented: $app.showTrash) { TrashView().environmentObject(app) }
     }
 
     @ViewBuilder func workspace(_ w: Workspace) -> some View {
@@ -169,7 +169,7 @@ struct Sidebar: View {
                 }
             }
             Divider()
-            Button("删除…", role: .destructive) { confirmDelete = r }
+            Button("移到废纸篓", role: .destructive) { withAnimation(.easeOut(duration: 0.15)) { app.delete(r) } }
         }
     }
 
@@ -258,5 +258,24 @@ struct UsageCard: View {
                 .frame(height: 4)
             }
         }
+    }
+}
+
+/// 设置旁边的废纸篓入口，带数量
+struct TrashButton: View {
+    @EnvironmentObject var app: AppState
+    @ObservedObject var store = TrashStore.shared
+    var body: some View {
+        Button { app.showTrash = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: store.entries.isEmpty ? "trash" : "trash.fill").font(.system(size: 12))
+                if !store.entries.isEmpty { Text("\(store.entries.count)").font(.system(size: 11)) }
+            }
+            .foregroundStyle(T.muted)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("废纸篓：删除的对话可以在这里恢复")
     }
 }
