@@ -93,15 +93,12 @@ final class Updater: ObservableObject {
             let r = Shell.run(gh, ["api", "repos/\(repo)/releases/latest"], timeout: 20)
             if r.code == 0, let d = r.output.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
         }
-        if json == nil, let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") {
-            let sem = DispatchSemaphore(value: 0)
-            var req = URLRequest(url: url, timeoutInterval: 20)
-            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            URLSession.shared.dataTask(with: req) { d, _, _ in
-                if let d { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
-                sem.signal()
-            }.resume()
-            _ = sem.wait(timeout: .now() + 25)
+        if json == nil {
+            // 匿名读公开仓库。用 curl + 登录环境：终端里配的代理（HTTPS_PROXY 等）也会生效，直连 GitHub 常常连不上
+            let r = Shell.run("/usr/bin/curl", ["-fsSL", "--connect-timeout", "10", "--max-time", "25",
+                                                "-H", "Accept: application/vnd.github+json",
+                                                "https://api.github.com/repos/\(repo)/releases/latest"], timeout: 30)
+            if r.code == 0, let d = r.output.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
         }
         guard let j = json, let tag = j["tag_name"] as? String else {
             return .failure(UpdateError(msg: ghPath == nil ? "读不到版本信息：仓库是私有的，需要本机装好并登录 gh" : "读不到版本信息，检查网络或 gh 登录状态"))
@@ -156,11 +153,13 @@ final class Updater: ObservableObject {
             let res = Shell.run(gh, ["release", "download", r.tag, "--repo", repo, "--pattern", r.zipName, "--dir", work.path, "--clobber"], timeout: 300)
             if res.code != 0 { try? fm.removeItem(at: zip) }
         }
-        if !fm.fileExists(atPath: zip.path), let u = URL(string: r.zipURL) {
-            let d = try Data(contentsOf: u)
-            try d.write(to: zip)
+        if !fm.fileExists(atPath: zip.path), !r.zipURL.isEmpty {
+            // 同样走 curl + 登录环境里的代理；最多 5 分钟，失败重试 2 次，不会一直卡在「正在下载」
+            let res = Shell.run("/usr/bin/curl", ["-fL", "--retry", "2", "--connect-timeout", "15", "--max-time", "300",
+                                                  "-o", zip.path, r.zipURL], timeout: 320)
+            if res.code != 0 { try? fm.removeItem(at: zip) }
         }
-        guard fm.fileExists(atPath: zip.path) else { throw UpdateError(msg: "下载失败，检查网络或 gh 登录状态") }
+        guard fm.fileExists(atPath: zip.path) else { throw UpdateError(msg: "下载超时，连不上 GitHub（可能需要开代理）") }
         let out = work.appendingPathComponent("unzipped")
         let unzip = Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path], timeout: 120)
         guard unzip.code == 0 else { throw UpdateError(msg: "解压失败：\(unzip.output)") }
