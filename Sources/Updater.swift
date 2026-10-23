@@ -32,6 +32,8 @@ final class Updater: ObservableObject {
     }
 
     static var ghPath: String? {
+        // 仅用于测试：DUIHUATAI_NO_GH=1 假装本机没有 gh，走匿名下载
+        if ProcessInfo.processInfo.environment["DUIHUATAI_NO_GH"] != nil { return nil }
         let candidates = [NSString(string: "~/.local/bin/gh").expandingTildeInPath, "/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
             + (LoginEnv.shared["PATH"] ?? "").split(separator: ":").map { "\($0)/gh" }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }

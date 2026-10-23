@@ -18,6 +18,9 @@ struct HistoryEntry: Identifiable, Hashable {
     let cwd: String
     let title: String
     let modified: Date
+    var continuesFrom: Set<String> = []   // 文件里复制过来的旧会话 ID（旧版 --resume 会新建文件并复制历史）
+    var orphanParent: String?             // 第一条消息接在哪条「不在本文件里」的消息后面
+    var tailUuids: Set<String> = []       // 文件末尾的消息 ID，用来认出谁接着它往下聊
     var folder: String { (cwd as NSString).lastPathComponent.isEmpty ? cwd : (cwd as NSString).lastPathComponent }
 }
 
@@ -37,10 +40,25 @@ enum History {
             }
         }
         files.sort { $0.1 > $1.1 }
-        return files.prefix(limit).compactMap { entry(url: $0.0, modified: $0.1) }
+        return mergeContinuations(files.prefix(limit).compactMap { entry(url: $0.0, modified: $0.1) })
     }
 
-    private static func entry(url: URL, modified: Date) -> HistoryEntry? {
+    /// 同一段对话被拆成多个文件时（终端里续接旧对话会新建文件、把历史复制过去），只保留最新的那个文件：
+    /// 它已经包含完整历史。被续接的旧文件从列表里隐藏。
+    static func mergeContinuations(_ list: [HistoryEntry]) -> [HistoryEntry] {
+        let byId = Dictionary(list.map { ($0.sessionId, $0) }, uniquingKeysWith: { a, _ in a })
+        var ownerOfTail: [String: String] = [:]
+        for e in list { for u in e.tailUuids { ownerOfTail[u] = e.sessionId } }
+        var hidden = Set<String>()
+        for e in list {
+            var preds = e.continuesFrom.filter { byId[$0] != nil }
+            if let p = e.orphanParent, let owner = ownerOfTail[p], owner != e.sessionId { preds.insert(owner) }
+            for p in preds where (byId[p]?.modified ?? .distantFuture) <= e.modified { hidden.insert(p) }
+        }
+        return list.filter { !hidden.contains($0.sessionId) }
+    }
+
+    static func entry(url: URL, modified: Date) -> HistoryEntry? {
         guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? h.close() }
         let head = h.readData(ofLength: 256 * 1024)
@@ -49,9 +67,14 @@ enum History {
         try? h.seek(toOffset: tailStart)
         let tail = h.readDataToEndOfFile()
 
+        let ownId = url.deletingPathExtension().lastPathComponent
         var cwd: String?, firstPrompt: String?, aiTitle: String?
+        var foreign = Set<String>(), seen = Set<String>(), orphan: String?
         for line in head.split(separator: 0x0A) {
             guard let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            if let sid = o["sessionId"] as? String, sid != ownId { foreign.insert(sid) }
+            if orphan == nil, let p = o["parentUuid"] as? String, !seen.contains(p) { orphan = p }
+            if let u = o["uuid"] as? String { seen.insert(u) }
             if cwd == nil, let c = o["cwd"] as? String { cwd = c }
             if firstPrompt == nil, o["type"] as? String == "user", o["isMeta"] as? Bool != true,
                o["isCompactSummary"] as? Bool != true,
@@ -61,16 +84,22 @@ enum History {
                 firstPrompt = d.text.isEmpty ? (d.files.first?.lastPathComponent ?? s) : d.text
             }
             if aiTitle == nil, o["type"] as? String == "ai-title" { aiTitle = o["aiTitle"] as? String }
-            if cwd != nil && firstPrompt != nil { break }
         }
-        for line in tail.split(separator: 0x0A).reversed() where line.count < 4000 {
-            guard let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
-            if o["type"] as? String == "ai-title", let t = o["aiTitle"] as? String { aiTitle = t; break }
+        var tailUuids = Set<String>(), tailTitle: String?
+        for line in tail.split(separator: 0x0A).reversed() {
+            if line.count < 4000, tailTitle == nil, let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+               o["type"] as? String == "ai-title", let t = o["aiTitle"] as? String { tailTitle = t }
+            // 只取末尾这段消息的 ID（不完整解析大行，用字符串查找）
+            if let r = line.range(of: Data("\"uuid\":\"".utf8)) {
+                let rest = line[r.upperBound...]
+                if let end = rest.firstIndex(of: UInt8(ascii: "\"")), let u = String(data: Data(rest[rest.startIndex..<end]), encoding: .utf8) { tailUuids.insert(u) }
+            }
         }
+        if let tailTitle { aiTitle = tailTitle }
         guard let cwd, firstPrompt != nil || aiTitle != nil else { return nil }
         let title = aiTitle ?? ToolLabel.firstLine(firstPrompt ?? "")
-        return HistoryEntry(sessionId: url.deletingPathExtension().lastPathComponent, url: url, cwd: cwd,
-                            title: title, modified: modified)
+        return HistoryEntry(sessionId: ownId, url: url, cwd: cwd, title: title, modified: modified,
+                            continuesFrom: foreign, orphanParent: orphan, tailUuids: tailUuids)
     }
 
     static func promptText(_ c: Any?) -> String? {
