@@ -26,9 +26,19 @@
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Claude 需要读写你让它处理的桌面文件。</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Claude 需要读写你让它处理的文稿文件。</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Claude 需要读取你让它处理的下载文件。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Claude 需要读写你让它处理的网络磁盘上的文件。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Claude 需要读写你让它处理的移动硬盘上的文件。</string>
 </dict>
 </plist>

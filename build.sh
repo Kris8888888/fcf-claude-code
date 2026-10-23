@@ -11,7 +11,16 @@ echo "编译 x86_64…"; swiftc "${COMMON[@]}" -target x86_64-apple-macos$MIN -o
 lipo -create "$OUT/arm64/$EXE" "$OUT/x86_64/$EXE" -output "$APP/Contents/MacOS/$EXE"
 echo "生成图标…"; swiftc -O -sdk "$SDK" tools/MakeIcon.swift -o "$OUT/MakeIcon" -framework AppKit; "$OUT/MakeIcon" "$OUT/AppIcon.iconset"; iconutil -c icns "$OUT/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Info.plist "$APP/Contents/Info.plist"; echo -n "APPL????" > "$APP/Contents/PkgInfo"
-echo "签名…"; codesign --force --deep --sign - --identifier com.likang.duihuatai "$APP"
+# 用固定的自签名证书签名：系统按「编号 + 证书」认 App，更新后文件夹访问授权不会丢。
+# 证书在本机钥匙串里（备份：~/Library/Application Support/com.likang.duihuatai-signing/），找不到才退回临时签名
+SIGN_ID="FCF Claude Code Signing"
+if security find-identity -p codesigning | grep -q "$SIGN_ID"; then
+  echo "签名（${SIGN_ID}）…"; codesign --force --deep --sign "$SIGN_ID" --identifier com.likang.duihuatai "$APP"
+else
+  echo "⚠️ 没找到签名证书，用临时签名（每次打包后系统都会重新询问文件夹权限）"
+  codesign --force --deep --sign - --identifier com.likang.duihuatai "$APP"
+fi
+codesign -dr - "$APP" 2>&1 | tail -1
 echo "打包…"
 VER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
 PKG="FCF-Claude-Code-$VER"
