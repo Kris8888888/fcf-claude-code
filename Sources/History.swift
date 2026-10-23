@@ -123,6 +123,23 @@ enum History {
         return String(rest)
     }
 
+    /// 对话最后一次回复时的上下文大小（从文件末尾找最后一条 usage），重新打开旧对话时就能知道它有多长
+    static func lastContextTokens(_ url: URL) -> Int {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return 0 }
+        defer { try? h.close() }
+        let size = (try? h.seekToEnd()) ?? 0
+        try? h.seek(toOffset: size > 512 * 1024 ? size - 512 * 1024 : 0)
+        let tail = h.readDataToEndOfFile()
+        for line in tail.split(separator: 0x0A).reversed() where line.range(of: Data("\"usage\"".utf8)) != nil {
+            guard let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  o["type"] as? String == "assistant", o["isSidechain"] as? Bool != true,
+                  let u = (o["message"] as? [String: Any])?["usage"] as? [String: Any] else { continue }
+            let n = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].reduce(0) { $0 + ((u[$1] as? Int) ?? 0) }
+            if n > 0 { return n }
+        }
+        return 0
+    }
+
     static func promptText(_ c: Any?) -> String? {
         if let s = c as? String { return s }
         if let arr = c as? [[String: Any]] {

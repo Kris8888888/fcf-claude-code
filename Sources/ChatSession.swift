@@ -52,7 +52,7 @@ final class ChatSession: ObservableObject, Identifiable {
     private var interrupted = false        // 本轮是你手动停的，不发完成通知
     private var watchdog: Timer?
     /// 多久没消息算卡住（秒）；DUIHUATAI_STALL_SECONDS 仅用于测试
-    private static let stallAfter = Double(ProcessInfo.processInfo.environment["DUIHUATAI_STALL_SECONDS"] ?? "") ?? 180
+    private static let stallAfter = Double(ProcessInfo.processInfo.environment["DUIHUATAI_STALL_SECONDS"] ?? "") ?? 600
 
     init(cwd: String, title: String = "新对话", sessionId: String? = nil) {
         self.cwd = cwd
@@ -234,7 +234,11 @@ final class ChatSession: ObservableObject, Identifiable {
             lastEventAt = Date(); return
         }
         // 正在思考时后端不返回思考内容，给更长的时间
-        let limit = agentOnly ? Self.stallAfter * 5 : thinkingItem != nil ? Self.stallAfter * 2.5 : Self.stallAfter
+        // Claude 自己遇到断网会自动重试（会发 api_retry 消息过来），这里只兜底「彻底没动静」的情况。
+        // 对话很长（几十万字上下文）时，代理处理一次请求、出第一个字就要好几分钟，阈值也要跟着放宽
+        var limit = Self.stallAfter
+        if contextTokens > 300_000 { limit *= 1.5 }
+        if agentOnly { limit *= 3 } else if thinkingItem != nil { limit *= 1.5 }
         let s = Date().timeIntervalSince(lastEventAt) > limit
         if s != stalled { stalled = s }
     }
@@ -474,6 +478,11 @@ final class ChatSession: ObservableObject, Identifiable {
             case "compacting": status = "正在压缩上下文"
             default: break
             }
+        case "api_retry":
+            // 连接断了，Claude 正在自动重试：如实告诉你，不用你操作
+            let n = e["attempt"] as? Int ?? 0, total = e["max_retries"] as? Int ?? 0
+            let why = (e["error_status"] as? Int) == 429 ? "请求太频繁" : (e["error_status"] as? Int).map { $0 >= 500 ? "服务繁忙" : "请求出错" } ?? "网络连接断了"
+            setStatus("\(why)，正在自动重试（第 \(n)/\(total) 次）")
         case "compact_boundary":
             items.append(ChatItem(.notice, "上下文已压缩，较早的内容已经整理成摘要。"))
         default: break
@@ -609,7 +618,9 @@ final class ChatSession: ObservableObject, Identifiable {
         loading = true
         DispatchQueue.global(qos: .userInitiated).async {
             let parsed = History.loadTranscript(url)
+            let ctx = History.lastContextTokens(url)
             DispatchQueue.main.async {
+                if self.contextTokens == 0 { self.contextTokens = ctx }
                 self.loading = false
                 guard self.items.isEmpty else { return }
                 self.items = parsed.items

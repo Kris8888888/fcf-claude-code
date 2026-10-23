@@ -286,8 +286,8 @@ struct BusyRow: View {
             // 卡住时转圈停下、节点变警示色：不再假装在工作
             Rail(node: T.err) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("已经 \(max(1, Int(Date().timeIntervalSince(session.lastEventAt) / 60))) 分钟没有收到任何回复，连接可能断了").font(T.small).foregroundStyle(T.ink)
-                    Text("如果确实在做很长的思考，可以继续等；否则重新连接，Claude 会接着刚才的进度做。")
+                    Text("已经 \(max(1, Int(Date().timeIntervalSince(session.lastEventAt) / 60))) 分钟没有任何动静，可能卡住了").font(T.small).foregroundStyle(T.ink)
+                    Text("网络短暂断开时 Claude 会自己重试，不会走到这一步；等了这么久还没反应，建议重新连接，Claude 会接着刚才的进度做。")
                         .font(T.small).foregroundStyle(T.muted).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 14) {
                         Button("重新连接并继续") { session.reconnect() }.buttonStyle(PrimaryButton())
@@ -300,7 +300,13 @@ struct BusyRow: View {
             }
         } else {
             Rail(spinning: true) {
-                Text(session.status.isEmpty ? "处理中" : session.status).font(T.small).foregroundStyle(T.run).padding(.top, 3)
+                // 超过 1 分钟没新消息时，显示等了多久，对话很长时说明为什么慢，免得以为卡死了
+                TimelineView(.periodic(from: .now, by: 15)) { ctx in
+                    let waited = Int(ctx.date.timeIntervalSince(session.lastEventAt) / 60)
+                    let base = session.status.isEmpty ? "处理中" : session.status
+                    let hint = waited < 1 ? "" : "  ·  已等 \(waited) 分钟" + (session.contextTokens > 300_000 ? "（这个对话很长，每次回复都要先读完全部内容，会慢一些）" : "")
+                    Text(base + hint).font(T.small).foregroundStyle(T.run).padding(.top, 3)
+                }
             }
         }
     }
