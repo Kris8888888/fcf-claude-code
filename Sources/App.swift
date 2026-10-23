@@ -24,7 +24,7 @@ struct DuihuataiApp: App {
                 .environmentObject(app)
                 .background(SettingsDemoOpener())
                 .frame(minWidth: 820, minHeight: 560)
-                .onAppear { delegate.app = app }
+                .onAppear { delegate.app = app; Notifier.shared.app = app }
         }
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGPIPE, SIG_IGN)
         ThemeStore.shared.applyAppearance()
         Updater.shared.start()
+        Notifier.shared.start()
         // 提前在后台取好登录环境，第一条消息不用等
         DispatchQueue.global().async { _ = LoginEnv.shared }
     }

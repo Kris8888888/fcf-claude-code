@@ -126,8 +126,9 @@ struct Transcript: View {
                             .id(g[0].id)
                         }
                     }
-                    if session.busy && !(session.items.last?.streaming ?? false) {
-                        BusyRow(status: session.status).id("busy")
+                    // 卡住时一定要显示提示：最容易卡住的就是「思考中」或回复写到一半，这时最后一条正在输出
+                    if session.busy && (session.stalled || !(session.items.last?.streaming ?? false)) {
+                        BusyRow(session: session).id("busy")
                     }
                 }
                 .frame(maxWidth: 800)
@@ -259,10 +260,28 @@ struct Rail<Content: View>: View {
 }
 
 struct BusyRow: View {
-    let status: String
+    @ObservedObject var session: ChatSession
     var body: some View {
-        Rail(spinning: true) {
-            Text(status.isEmpty ? "处理中" : status).font(T.small).foregroundStyle(T.run).padding(.top, 3)
+        if session.stalled {
+            // 卡住时转圈停下、节点变警示色：不再假装在工作
+            Rail(node: T.err) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("已经 \(max(1, Int(Date().timeIntervalSince(session.lastEventAt) / 60))) 分钟没有收到任何回复，连接可能断了").font(T.small).foregroundStyle(T.ink)
+                    Text("如果确实在做很长的思考，可以继续等；否则重新连接，Claude 会接着刚才的进度做。")
+                        .font(T.small).foregroundStyle(T.muted).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 14) {
+                        Button("重新连接并继续") { session.reconnect() }.buttonStyle(PrimaryButton())
+                        Button("停止") { session.stopStalled() }
+                            .buttonStyle(.plain).foregroundStyle(T.muted).font(.system(size: fs(13)))
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(.top, 3)
+            }
+        } else {
+            Rail(spinning: true) {
+                Text(session.status.isEmpty ? "处理中" : session.status).font(T.small).foregroundStyle(T.run).padding(.top, 3)
+            }
         }
     }
 }

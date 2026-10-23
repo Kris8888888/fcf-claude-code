@@ -19,6 +19,7 @@ final class ChatSession: ObservableObject, Identifiable {
     @Published var started = false
     @Published var streamTick = 0          // 流式输出时递增，用来让列表跟着滚动
     @Published var needsAttention = false  // 有等你回答/确认的卡片（侧栏蓝点）
+    @Published var stalled = false         // 忙着但很久没收到任何消息，连接可能断了
 
     // 输入框草稿跟着对话走，切换对话不会丢；单独一个对象，打字不会刷新整段对话列表
     let draft = DraftState()
@@ -40,6 +41,11 @@ final class ChatSession: ObservableObject, Identifiable {
     private var modeBeforePlan: PermissionMode?
     private var deltaBuf = ""
     private var flushScheduled = false
+    private(set) var lastEventAt = Date()
+    private var interrupted = false        // 本轮是你手动停的，不发完成通知
+    private var watchdog: Timer?
+    /// 多久没消息算卡住（秒）；DUIHUATAI_STALL_SECONDS 仅用于测试
+    private static let stallAfter = Double(ProcessInfo.processInfo.environment["DUIHUATAI_STALL_SECONDS"] ?? "") ?? 180
 
     init(cwd: String, title: String = "新对话", sessionId: String? = nil) {
         self.cwd = cwd
@@ -55,7 +61,12 @@ final class ChatSession: ObservableObject, Identifiable {
     private func ensureProcess() -> Bool {
         if let proc, proc.isRunning { return true }
         let p = ClaudeProcess()
-        p.onEvent = { [weak self] e in self?.handle(e) }
+        p.onEvent = { [weak self] e in
+            guard let self else { return }
+            self.lastEventAt = Date()
+            if self.stalled { self.stalled = false }
+            self.handle(e)
+        }
         p.onExit = { [weak self] code, tail in self?.processExited(code: code, output: tail) }
         do {
             // 用户手动选过模式才传参数，否则跟随各层 settings.json
@@ -177,13 +188,65 @@ final class ChatSession: ObservableObject, Identifiable {
         guard ensureProcess() else { return }
         proc?.send(["type": "user", "message": ["role": "user", "content": content]])
         busy = true
+        interrupted = false
         status = "等待回复"
         lastActive = Date()
+        startWatchdog()
+    }
+
+    // MARK: 看门狗：网络掉线后后台可能一直干等，不报错也不断开
+
+    private func startWatchdog() {
+        lastEventAt = Date()
+        stalled = false
+        guard watchdog == nil else { return }
+        let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.checkStall() }
+        RunLoop.main.add(t, forMode: .common)
+        watchdog = t
+    }
+
+    private func checkStall() {
+        guard busy else { watchdog?.invalidate(); watchdog = nil; stalled = false; return }
+        // 等你回答、或工具（比如长时间跑的命令）还在执行时没消息是正常的
+        if needsAttention || toolItems.values.contains(where: { $0.toolState == .running }) {
+            lastEventAt = Date(); return
+        }
+        // 正在思考时后端不返回思考内容，给更长的时间
+        let limit = thinkingItem != nil ? Self.stallAfter * 2.5 : Self.stallAfter
+        let s = Date().timeIntervalSince(lastEventAt) > limit
+        if s != stalled { stalled = s }
+    }
+
+    /// 卡住后：结束后台进程，接着这个对话重新启动，让 Claude 从刚才的进度继续
+    func reconnect() {
+        abandonProcess()
+        items.append(ChatItem(.notice, "连接中断，已重新连接。"))
+        if sessionId != nil {
+            send(text: "刚才连接中断了，请接着刚才的进度继续。", images: [])
+        } else if let last = items.last(where: { $0.kind == .user }) {
+            // 对话还没真正开始就断了（没有会话编号，接不上），把你刚才那条原样重发
+            send(text: last.text, images: last.images, files: last.files)
+        }
+    }
+
+    /// 卡住后只停止，不重发
+    func stopStalled() {
+        abandonProcess()
+        items.append(ChatItem(.notice, "已停止。再发一条消息会接着这个对话继续。"))
+    }
+
+    private func abandonProcess() {
+        shutdown()
+        finishStreaming()
+        for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
+        status = ""
+        stalled = false
     }
 
     func interrupt() {
         guard busy else { return }
         control(["subtype": "interrupt"])
+        interrupted = true
         status = "正在停止"
     }
 
@@ -356,6 +419,7 @@ final class ChatSession: ObservableObject, Identifiable {
             }
             for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest); NSSound(named: "Glass")?.play() }
+            if (e["is_error"] as? Bool) != true && !interrupted { Notifier.shared.taskDone(self) }
         case "rate_limit_event":
             if let info = e["rate_limit_info"] as? [String: Any] { UsageStore.shared.update(info) }
         case "control_request":
