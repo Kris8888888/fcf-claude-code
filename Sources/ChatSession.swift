@@ -421,7 +421,9 @@ final class ChatSession: ObservableObject, Identifiable {
                 deltaBuf += t
                 if !flushScheduled {
                     flushScheduled = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in self?.flushDelta() }
+                    // 长回复每次重排更费时，放宽刷新间隔，给输入框留出响应时间
+                    let interval = (streamingItem?.text.count ?? 0) > 3000 ? 0.15 : 0.06
+                    DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in self?.flushDelta() }
                 }
             } else if d["type"] as? String == "thinking_delta", let t = d["thinking"] as? String, let it = thinkingItem {
                 it.text += t

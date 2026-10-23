@@ -156,10 +156,15 @@ struct InputTextView: NSViewRepresentable {
         tv.onArrow = onArrow
         tv.onTab = onTab
         tv.onEscape = onEscape
-        if tv.string != text {
-            tv.string = text
-            tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            context.coordinator.recalc()
+        // 只在草稿被「外部」改了时（↑ 调出历史、放回输入框、发送后清空）才改输入框。
+        // Claude 思考/回复时界面会不停刷新，以前每次都拿草稿覆盖输入框，正在组字的拼音会丢、光标跳到末尾
+        if text != context.coordinator.lastSynced && !tv.hasMarkedText() {
+            if tv.string != text {
+                tv.string = text
+                tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+                context.coordinator.recalc()
+            }
+            context.coordinator.lastSynced = text
         }
         if context.coordinator.focusToken != focusToken {
             context.coordinator.focusToken = focusToken
@@ -172,10 +177,12 @@ struct InputTextView: NSViewRepresentable {
         var parent: InputTextView
         weak var tv: ComposerTextView?
         var focusToken = 0
+        var lastSynced = ""     // 输入框和草稿最后一次一致时的内容
         init(_ p: InputTextView) { parent = p; focusToken = p.focusToken }
 
         func textDidChange(_ n: Notification) {
             guard let tv else { return }
+            lastSynced = tv.string
             parent.text = tv.string
             recalc()
         }
