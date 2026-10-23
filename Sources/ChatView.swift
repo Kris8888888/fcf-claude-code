@@ -7,6 +7,17 @@ struct ChatView: View {
     @ObservedObject var session: ChatSession
     @State private var dropping = false
 
+    static func folderLabel(_ cwd: String) -> String {
+        let home = NSHomeDirectory()
+        if cwd == home { return "在个人文件夹（\((home as NSString).lastPathComponent)）里工作" }
+        let name = (cwd as NSString).lastPathComponent
+        let parent = ((cwd as NSString).deletingLastPathComponent as NSString).lastPathComponent
+        // 带上上一级，方便认出是哪里的同名文件夹，比如「桌面 › 报价单」
+        let parentName = ["Desktop": "桌面", "Documents": "文稿", "Downloads": "下载"][parent] ?? parent
+        return cwd.hasPrefix(home) && !parentName.isEmpty && parentName != (home as NSString).lastPathComponent
+            ? "在「\(parentName) › \(name)」文件夹里工作" : "在「\(name)」文件夹里工作"
+    }
+
     var body: some View {
         Group {
             if session.loading {
@@ -42,7 +53,16 @@ struct ChatView: View {
             }
         }
         .navigationTitle(app.title(for: session.sessionId, fallback: session.title))
-        .navigationSubtitle(session.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+        // 以前显示「~」这类路径简写，改成直白的说法；工具栏的文件夹按钮能直接在访达里打开
+        .navigationSubtitle(Self.folderLabel(session.cwd))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { NSWorkspace.shared.open(URL(fileURLWithPath: session.cwd)) } label: {
+                    Label("在访达中打开工作文件夹", systemImage: "folder")
+                }
+                .help("在访达中打开：" + session.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "个人文件夹"))
+            }
+        }
     }
 }
 
@@ -334,7 +354,7 @@ struct UserBubble: View {
             VStack(alignment: .trailing, spacing: 6) {
                 if !item.images.isEmpty || !item.files.isEmpty {
                     FlowRow(spacing: 8) {
-                        ForEach(Array(item.images.enumerated()), id: \.offset) { _, img in ImageCard(image: img) }
+                        ForEach(Array(item.images.enumerated()), id: \.offset) { _, img in ImageCard(image: img, size: 72) }
                         ForEach(item.files, id: \.self) { f in FileCard(url: f) }
                     }
                 }

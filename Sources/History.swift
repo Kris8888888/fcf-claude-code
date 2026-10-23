@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 enum CCSettings {
     static let defaultMode: PermissionMode = {
@@ -144,9 +145,15 @@ enum History {
                     }
                     continue
                 }
-                guard let s = promptText(m["content"]) else { continue }
+                // 你发过的图片（截图、粘贴的图）也读回来，重新打开旧对话时能看能点
+                let imgs: [NSImage] = ((m["content"] as? [[String: Any]]) ?? []).compactMap { b in
+                    guard b["type"] as? String == "image", let src = b["source"] as? [String: Any],
+                          let b64 = src["data"] as? String, let d = Data(base64Encoded: b64) else { return nil }
+                    return NSImage(data: d)
+                }
+                guard let s = promptText(m["content"]) ?? (imgs.isEmpty ? nil : "") else { continue }
                 if o["isMeta"] as? Bool == true {
-                    if !s.hasPrefix("<") { items.append(ChatItem(.notice, s)) }
+                    if !s.hasPrefix("<") && !s.hasPrefix("[Image: source:") { items.append(ChatItem(.notice, s)) }
                     continue
                 }
                 if s.hasPrefix("<command-name>") {
@@ -161,8 +168,12 @@ enum History {
                 if s.hasPrefix("<") { continue }
                 flushArtifacts()
                 let d = FileKind.decode(s)
-                let u = ChatItem(.user, d.text)
+                // 终端里贴图会在文字里留「[Image #1]」占位，图片已经单独显示了，去掉占位
+                let text = imgs.isEmpty ? d.text : d.text.replacingOccurrences(of: #"\[Image #\d+\]\s*"#, with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let u = ChatItem(.user, text)
                 u.files = d.files
+                u.images = imgs
                 items.append(u)
                 turnStart = items.count
             } else {

@@ -98,9 +98,14 @@ struct FileCard: View {
                 .buttonStyle(.plain).offset(x: 5, y: -5).help("移除")
             }
         }
-        .onHover { hover = $0 }
+        .onHover { h in
+            hover = h
+            if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
         .help(url.path)
+        // 单击预览，双击用默认程序打开
         .onTapGesture(count: 2) { NSWorkspace.shared.open(url) }
+        .onTapGesture { Artifacts.quickLook(url) }
         .contextMenu {
             Button("打开") { NSWorkspace.shared.open(url) }
             Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -111,10 +116,11 @@ struct FileCard: View {
 struct ImageCard: View {
     let image: NSImage
     var onRemove: (() -> Void)? = nil
+    var size: CGFloat = 50
     @State private var hover = false
     var body: some View {
         Image(nsImage: image).resizable().scaledToFill()
-            .frame(width: 50, height: 50)
+            .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(T.line.opacity(0.7), lineWidth: 1))
             .overlay(alignment: .topTrailing) {
@@ -125,7 +131,26 @@ struct ImageCard: View {
                     .buttonStyle(.plain).offset(x: 5, y: -5)
                 }
             }
-            .onHover { hover = $0 }
+            .brightness(hover ? -0.06 : 0)
+            .contentShape(Rectangle())
+            .onTapGesture { ImagePreview.show(image) }
+            .onHover { h in
+                hover = h
+                if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .help("点击查看大图")
+    }
+}
+
+/// 图片预览：图片只在内存里（粘贴、截图），先存成临时文件再用系统快速查看打开
+enum ImagePreview {
+    static func show(_ image: NSImage) {
+        guard let png = image.pngData else { return }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("duihuatai-preview", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("图片-\(abs(png.hashValue)).png")
+        if !FileManager.default.fileExists(atPath: url.path) { try? png.write(to: url) }
+        Artifacts.quickLook(url)
     }
 }
 
