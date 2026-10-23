@@ -23,8 +23,8 @@ final class StatusProbe: ObservableObject {
         loading = true; error = nil
         let p = ClaudeProcess()
         proc = p
-        p.onEvent = { [weak self] e in
-            guard let self else { return }
+        p.onEvent = { [weak self, weak p] e in
+            guard let self, let p else { return }
             if e["type"] as? String == "system", e["subtype"] as? String == "init" {
                 self.initInfo = e
                 // 代理由 FCF 在启动时注入，只能从真正的 claude 进程环境里读
@@ -64,7 +64,12 @@ final class StatusProbe: ObservableObject {
         let p = proc
         proc = nil
         // 稍等一下再关，让读代理的那一步先完成
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { p?.onExit = nil; p?.terminate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { p?.onEvent = nil; p?.onExit = nil; p?.terminate() }
+    }
+
+    // 面板关掉时还没读完：直接结束后台进程，别留孤儿
+    deinit {
+        proc?.onEvent = nil; proc?.onExit = nil; proc?.terminate()
     }
 
     static func proxy(under pid: Int32) -> String? {

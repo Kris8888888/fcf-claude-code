@@ -45,6 +45,8 @@ final class ComposerTextView: NSTextView {
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
             handleFiles(urls); return true
         }
+        // Excel / Word / 网页复制的内容同时带文字和一张预览图，有文字就按文字粘贴
+        if let t = pb.string(forType: .string), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
         if pb.availableType(from: [.png, .tiff]) != nil, let imgs = pb.readObjects(forClasses: [NSImage.self]) as? [NSImage], !imgs.isEmpty {
             onImages?(imgs); return true
         }

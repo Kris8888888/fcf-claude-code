@@ -4,9 +4,12 @@ import AppKit
 /// 把一段 Markdown 排成「一整块」富文本：段落、标题、列表、引用、代码块、表格都在同一个文本里，
 /// 这样能跨段落、跨列表、跨表格拖选和复制（之前每段是单独的 Text，只能选中一段）
 enum MarkdownAttr {
-    private static let cache = NSCache<NSString, NSAttributedString>()
+    // 整段缓存：只存写完的回复；按段缓存：回复写的过程中只有最后一段在变，前面的段直接复用
+    private static let cache: NSCache<NSString, NSAttributedString> = { let c = NSCache<NSString, NSAttributedString>(); c.countLimit = 300; return c }()
+    private static let blockCache: NSCache<NSString, NSAttributedString> = { let c = NSCache<NSString, NSAttributedString>(); c.countLimit = 3000; return c }()
 
-    static func cached(_ text: String) -> NSAttributedString {
+    static func cached(_ text: String, streaming: Bool = false) -> NSAttributedString {
+        if streaming { return build(text) }      // 写到一半的中间状态不进整段缓存，免得堆积
         let key = "\(ThemeStore.shared.revision)|\(text)" as NSString
         if let a = cache.object(forKey: key) { return a }
         let a = build(text)
@@ -60,7 +63,8 @@ enum MarkdownAttr {
     }
 
     static func build(_ text: String) -> NSAttributedString {
-        let out = NSMutableAttributedString()
+        let result = NSMutableAttributedString()
+        var out = NSMutableAttributedString()
         let body = NSFont.systemFont(ofSize: bodySize)
         let blocks = MDCache.blocks(text)
 
@@ -75,6 +79,13 @@ enum MarkdownAttr {
         func spacer() { add(NSAttributedString(string: "\u{200B}", attributes: [.font: NSFont.systemFont(ofSize: fs(4))]), para(lineSpacing: 0, after: 4)) }
 
         for b in blocks {
+            let blockKey = "\(ThemeStore.shared.revision)|\(b)" as NSString
+            if let c = blockCache.object(forKey: blockKey) { result.append(c); continue }
+            out = NSMutableAttributedString()
+            defer {
+                blockCache.setObject(out.copy() as! NSAttributedString, forKey: blockKey)
+                result.append(out)
+            }
             switch b {
             case .heading(let lv, let s):
                 let size: CGFloat = fs(lv <= 1 ? 19 : lv == 2 ? 17 : 15)
@@ -159,8 +170,8 @@ enum MarkdownAttr {
             }
         }
         // 去掉末尾多余的换行
-        while out.length > 0, out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
-        return out
+        while result.length > 0, result.string.hasSuffix("\n") { result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1)) }
+        return result
     }
 }
 

@@ -111,9 +111,10 @@ final class MDCache {
 
 struct MarkdownView: View {
     let text: String
+    var streaming = false
     var body: some View {
         // 整段回复排成一个可选中的富文本，能跨段落、跨列表、跨表格拖选复制
-        SelectableText(attr: MarkdownAttr.cached(text))
+        SelectableText(attr: MarkdownAttr.cached(text, streaming: streaming))
     }
 }
 

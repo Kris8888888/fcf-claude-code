@@ -19,7 +19,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         guard Bundle.main.bundleIdentifier != nil else { print("[notify] \(s.title) 任务完成"); return }
         let content = UNMutableNotificationContent()
         // 标题：「对话名 任务完成」，下面一行是 Claude 回复的第一句
-        let name = s.title.count > 30 ? String(s.title.prefix(29)) + "…" : s.title
+        let full = app?.title(for: s.sessionId, fallback: s.title) ?? s.title     // 你改过名就用你起的名字
+        let name = full.count > 30 ? String(full.prefix(29)) + "…" : full
         content.title = "\(name) 任务完成"   // 不带声音：App 在后台时原本就会响一声，免得响两次
         if let reply = s.items.last(where: { $0.kind == .assistant && !$0.text.isEmpty })?.text {
             // 去掉 Markdown 记号（标题井号、加粗星号、反引号、列表符），通知里只留文字

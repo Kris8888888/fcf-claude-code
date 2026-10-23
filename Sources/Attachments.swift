@@ -1,4 +1,5 @@
 import SwiftUI
+import CryptoKit
 import AppKit
 
 // 附件卡片：类型图标 + 文件名 + 「类型 · 大小」
@@ -148,7 +149,9 @@ enum ImagePreview {
         guard let png = image.pngData else { return }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("duihuatai-preview", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("图片-\(abs(png.hashValue)).png")
+        // 用内容摘要做文件名：同一张图反复点只存一次（hashValue 每次启动都不同，临时文件会越积越多）
+        let digest = SHA256.hash(data: png).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let url = dir.appendingPathComponent("图片-\(digest).png")
         if !FileManager.default.fileExists(atPath: url.path) { try? png.write(to: url) }
         Artifacts.quickLook(url)
     }

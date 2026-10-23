@@ -37,7 +37,11 @@ final class ChatItem: ObservableObject, Identifiable {
         let it = ChatItem(.tool, ToolLabel.summary(name: name, input: input))
         it.toolUseId = id
         it.toolName = name
-        it.toolInput = input
+        // 只用来显示：写大文件、大段替换时别把整份内容一直留在内存里（权限确认卡片要原样回传，不走这里）
+        it.toolInput = input.mapValues { v in
+            if let s = v as? String, s.count > 20000 { return String(s.prefix(20000)) + "\n…（后面还有 \(s.count - 20000) 字，没有显示）" }
+            return v
+        }
         return it
     }
 

@@ -60,7 +60,19 @@ struct Workspace: Identifiable {
 
 final class AppState: ObservableObject {
     @Published var sessions: [ChatSession] = []
-    @Published var selected: UUID?
+    @Published var selected: UUID? {
+        didSet {
+            // 切走的旧对话如果只是点开看了看（没发消息、没在跑、没草稿），从内存里放掉；再点会从记录重新读
+            guard oldValue != selected, let old = oldValue, let s = sessions.first(where: { $0.id == old }),
+                  !s.started, !s.busy, s.sessionId != nil,
+                  s.draft.text.isEmpty, s.draft.images.isEmpty, s.draft.files.isEmpty else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.selected != old else { return }
+                self.subs[old] = nil
+                self.sessions.removeAll { $0.id == old }
+            }
+        }
+    }
     @Published var history: [HistoryEntry] = []
     @Published var search = ""
     @Published var searchFocusToken = 0
@@ -83,11 +95,16 @@ final class AppState: ObservableObject {
         newSession()
     }
 
+    private var historyGen = 0
+    private var deleting = Set<String>()     // 正在等进程退出再移进废纸篓的会话，刷新列表时先藏着
     func refreshHistory() {
+        historyGen += 1
+        let gen = historyGen
         DispatchQueue.global(qos: .userInitiated).async {
             let list = History.list()
             DispatchQueue.main.async {
-                self.history = list
+                guard gen == self.historyGen else { return }     // 后发的刷新已经在路上，旧结果作废
+                self.history = list.filter { !self.deleting.contains($0.sessionId) }
                 // 仅用于截图验证：DUIHUATAI_PIN_DEMO=1 临时置顶最近两个（不保存）
                 if ProcessInfo.processInfo.environment["DUIHUATAI_PIN_DEMO"] != nil, self.pinned.isEmpty {
                     self.pinned = list.prefix(2).map(\.sessionId)
@@ -216,24 +233,38 @@ final class AppState: ObservableObject {
     /// 删除 = 关掉后台进程 + 把会话记录移进 App 的废纸篓（可以恢复，到期自动清除）
     func delete(_ row: SidebarRow) {
         let sid = row.sessionId
-        if let s = row.live ?? sessions.first(where: { $0.sessionId != nil && $0.sessionId == sid }) { close(s, refresh: false) }
-        guard let sid else { refreshHistory(); return }     // 还没发过消息的空对话，关掉就行
+        let live = row.live ?? sessions.first(where: { $0.sessionId != nil && $0.sessionId == sid })
+        guard let sid else { if let live { close(live) } else { refreshHistory() }; return }     // 还没发过消息的空对话，关掉就行
         let wasPinned = pinned.contains(sid)
-        if let url = fileURL(for: sid) {
-            do {
-                try TrashStore.shared.add(sessionId: sid, file: url, title: row.title, cwd: row.cwd,
-                                          wasPinned: wasPinned, customTitle: customTitles[sid])
-                showToast("已移到废纸篓：\(row.title)", undo: { [weak self] in
-                    if let e = TrashStore.shared.entries.first(where: { $0.sessionId == sid }) { self?.restore(e) }
-                })
-            } catch {
-                showToast("删除失败：\(error.localizedDescription)")
-                return
-            }
-        }
+        let merged = history.first(where: { $0.sessionId == sid })?.mergedFiles ?? []
+        // 先从列表拿掉，界面立刻有反应；等 claude 进程真正退出再挪文件，否则它还会往原位置写，删掉的对话又冒出来
         history.removeAll { $0.sessionId == sid }
         if wasPinned { pinned.removeAll { $0 == sid }; UserDefaults.standard.set(pinned, forKey: "pinnedSessions") }
-        refreshHistory()
+        deleting.insert(sid)
+        let moveToTrash = { [weak self] in
+            guard let self else { return }
+            self.deleting.remove(sid)
+            if let url = self.fileURL(for: sid) {
+                do {
+                    try TrashStore.shared.add(sessionId: sid, file: url, title: row.title, cwd: row.cwd,
+                                              wasPinned: wasPinned, customTitle: self.customTitles[sid], extraFiles: merged)
+                    let key = TrashStore.shared.entries.first?.id
+                    self.showToast("已移到废纸篓：\(row.title)", undo: { [weak self] in
+                        if let e = TrashStore.shared.entries.first(where: { $0.id == key }) { self?.restore(e) }
+                    })
+                } catch {
+                    if wasPinned { self.pinned.insert(sid, at: 0); UserDefaults.standard.set(self.pinned, forKey: "pinnedSessions") }
+                    self.showToast("删除失败：\(error.localizedDescription)")
+                }
+            }
+            self.refreshHistory()
+        }
+        if let live {
+            live.shutdown(completion: moveToTrash)
+            close(live, refresh: false)
+        } else {
+            moveToTrash()
+        }
     }
 
     /// 从废纸篓恢复：放回原位置，原来置顶的恢复置顶
@@ -306,5 +337,5 @@ final class AppState: ObservableObject {
         if s.started { newSession(cwd: path) } else { s.changeFolder(path) }
     }
 
-    func shutdownAll() { sessions.forEach { $0.shutdown() } }
+    func shutdownAll() { sessions.forEach { $0.shutdown(wait: true) } }
 }

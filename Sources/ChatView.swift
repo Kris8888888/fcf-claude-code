@@ -186,7 +186,7 @@ struct Transcript: View {
             .onChange(of: session.items.count) {
                 if atBottom || session.items.last?.kind == .user { proxy.scrollTo("bottom", anchor: .bottom) }
             }
-            .onChange(of: session.streamTick) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
+            .onReceive(session.streamTicks) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
             .onChange(of: session.busy) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
         }
     }
@@ -315,7 +315,7 @@ struct ItemRow: View {
         case .user: UserBubble(item: item, session: session)
         case .assistant:
             Rail {
-                MarkdownView(text: item.text.isEmpty && item.streaming ? "…" : item.text)
+                MarkdownView(text: item.text.isEmpty && item.streaming ? "…" : item.text, streaming: item.streaming)
                     .foregroundStyle(T.ink)
                     .contextMenu {
                         Button("复制这段回复") {
@@ -399,7 +399,8 @@ struct ArtifactsBlock: View {
 
     var body: some View {
         let arts = item.artifacts
-        let total = all.count
+        let everything = all
+        let total = everything.count
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(arts.prefix(3)), id: \.self) { a in ArtifactCard(artifact: a) }
             if arts.count > 3 || total > arts.count {
@@ -411,7 +412,7 @@ struct ArtifactsBlock: View {
                     .font(.system(size: fs(13))).foregroundStyle(T.muted).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .popover(isPresented: $showAll, arrowEdge: .bottom) { AllArtifacts(artifacts: all) }
+                .popover(isPresented: $showAll, arrowEdge: .bottom) { AllArtifacts(artifacts: everything) }
             }
         }
         .padding(.vertical, 4)

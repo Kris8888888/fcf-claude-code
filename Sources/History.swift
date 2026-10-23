@@ -22,6 +22,7 @@ struct HistoryEntry: Identifiable, Hashable {
     var continuesFrom: Set<String> = []   // 文件里复制过来的旧会话 ID（旧版 --resume 会新建文件并复制历史）
     var orphanParent: String?             // 第一条消息接在哪条「不在本文件里」的消息后面
     var tailUuids: Set<String> = []       // 文件末尾的消息 ID，用来认出谁接着它往下聊
+    var mergedFiles: [URL] = []           // 被合并隐藏的旧文件（删除时要一起移走，否则旧的会重新冒出来）
     var folder: String { (cwd as NSString).lastPathComponent.isEmpty ? cwd : (cwd as NSString).lastPathComponent }
 }
 
@@ -51,12 +52,21 @@ enum History {
         var ownerOfTail: [String: String] = [:]
         for e in list { for u in e.tailUuids { ownerOfTail[u] = e.sessionId } }
         var hidden = Set<String>()
+        var predsOf: [String: Set<String>] = [:]
         for e in list {
             var preds = e.continuesFrom.filter { byId[$0] != nil }
             if let p = e.orphanParent, let owner = ownerOfTail[p], owner != e.sessionId { preds.insert(owner) }
-            for p in preds where (byId[p]?.modified ?? .distantFuture) <= e.modified { hidden.insert(p) }
+            for p in preds where (byId[p]?.modified ?? .distantFuture) <= e.modified { hidden.insert(p); predsOf[e.sessionId, default: []].insert(p) }
         }
-        return list.filter { !hidden.contains($0.sessionId) }
+        return list.filter { !hidden.contains($0.sessionId) }.map { e in
+            var out = e, seen: Set<String> = [e.sessionId], stack = Array(predsOf[e.sessionId] ?? [])
+            while let p = stack.popLast() {
+                guard seen.insert(p).inserted, let pe = byId[p] else { continue }
+                out.mergedFiles.append(pe.url)
+                stack.append(contentsOf: predsOf[p] ?? [])
+            }
+            return out
+        }
     }
 
     static func entry(url: URL, modified: Date) -> HistoryEntry? {
@@ -80,7 +90,7 @@ enum History {
             if firstPrompt == nil, o["type"] as? String == "user", o["isMeta"] as? Bool != true,
                o["isCompactSummary"] as? Bool != true,
                o["isSidechain"] as? Bool != true,
-               let m = o["message"] as? [String: Any], let s = promptText(m["content"]), !s.hasPrefix("<") {
+               let m = o["message"] as? [String: Any], let raw = promptText(m["content"]), case let s = stripBashContext(raw), !s.hasPrefix("<") {
                 let d = FileKind.decode(s)
                 firstPrompt = d.text.isEmpty ? (d.files.first?.lastPathComponent ?? s) : d.text
             }
@@ -103,6 +113,16 @@ enum History {
                             continuesFrom: foreign, orphanParent: orphan, tailUuids: tailUuids)
     }
 
+    /// 客户端把「!命令」的输出作为上下文放在消息开头（<bash-input>…</bash-stdout>），读回来时去掉，只留你写的话
+    static func stripBashContext(_ s: String) -> String {
+        guard s.hasPrefix("<bash-input>") else { return s }
+        var rest = Substring(s)
+        while rest.hasPrefix("<bash-input>"), let r = rest.range(of: "</bash-stdout>") {
+            rest = rest[r.upperBound...].drop(while: { $0 == "\n" })
+        }
+        return String(rest)
+    }
+
     static func promptText(_ c: Any?) -> String? {
         if let s = c as? String { return s }
         if let arr = c as? [[String: Any]] {
@@ -115,7 +135,8 @@ enum History {
 
     /// 把会话记录还原成界面条目（只取最近 400 条，避免超长会话卡顿）
     static func loadTranscript(_ url: URL) -> (items: [ChatItem], title: String?) {
-        guard let data = try? Data(contentsOf: url) else { return ([], nil) }
+        // 内存映射读取：几十 MB 的记录文件不用整份复制进内存，系统按需读、用完可回收
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return ([], nil) }
         var items: [ChatItem] = []
         var tools: [String: ChatItem] = [:]
         var title: String?
@@ -130,8 +151,12 @@ enum History {
                 items.append(it)
             }
         }
+        // 不显示的记录（请求备份、文件快照、队列操作）往往占了记录文件的一大半，解析前先按开头跳过
+        let skipPrefixes = ["{\"type\":\"api-request", "{\"type\":\"file-history", "{\"type\":\"queue-operation"].map { Data($0.utf8) }
         for line in data.split(separator: 0x0A) {
-            guard let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            if skipPrefixes.contains(where: { line.starts(with: $0) }) { continue }
+            // 逐行释放解析时的临时内存，长对话打开时内存不会一下涨很多
+            guard let o = autoreleasepool(invoking: { try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] }) else { continue }
             let type = o["type"] as? String
             if type == "ai-title" { title = o["aiTitle"] as? String; continue }
             guard type == "user" || type == "assistant", o["isSidechain"] as? Bool != true,
@@ -151,7 +176,8 @@ enum History {
                           let b64 = src["data"] as? String, let d = Data(base64Encoded: b64) else { return nil }
                     return NSImage(data: d)
                 }
-                guard let s = promptText(m["content"]) ?? (imgs.isEmpty ? nil : "") else { continue }
+                guard let raw = promptText(m["content"]) ?? (imgs.isEmpty ? nil : "") else { continue }
+                let s = o["isMeta"] as? Bool == true ? raw : stripBashContext(raw)
                 if o["isMeta"] as? Bool == true {
                     if !s.hasPrefix("<") && !s.hasPrefix("[Image: source:") { items.append(ChatItem(.notice, s)) }
                     continue

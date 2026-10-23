@@ -10,6 +10,7 @@ struct TrashView: View {
     @State private var query = ""
     @State private var confirmPurge: TrashEntry?
     @State private var confirmEmpty = false
+    @State private var pendingRetention: (days: Int, count: Int)?
 
     var filtered: [TrashEntry] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -46,7 +47,11 @@ struct TrashView: View {
             Divider()
             HStack(spacing: 8) {
                 Text("删除的对话保留").font(.system(size: fs(12))).foregroundStyle(T.muted)
-                Picker("", selection: $store.retentionDays) {
+                Picker("", selection: Binding(get: { store.retentionDays }, set: { v in
+                    // 改短会马上清掉已经过期的，先问一句
+                    let n = v > 0 ? store.entries.filter { $0.deletedAt.addingTimeInterval(Double(v) * 86400) < Date() }.count : 0
+                    if n > 0 { pendingRetention = (v, n) } else { store.retentionDays = v }
+                })) {
                     Text("7 天").tag(7); Text("30 天").tag(30); Text("90 天").tag(90); Text("永久").tag(0)
                 }
                 .labelsHidden().fixedSize()
@@ -75,6 +80,13 @@ struct TrashView: View {
             }
             Button("取消", role: .cancel) {}
         } message: { Text("里面的对话会被彻底删除，不能恢复。") }
+        .alert("改成保留 \(pendingRetention?.days ?? 0) 天？", isPresented: Binding(get: { pendingRetention != nil }, set: { if !$0 { pendingRetention = nil } })) {
+            Button("改，并删除 \(pendingRetention?.count ?? 0) 个", role: .destructive) {
+                if let r = pendingRetention { store.retentionDays = r.days; if let s = selected, !store.entries.contains(s) { selected = store.entries.first } }
+                pendingRetention = nil
+            }
+            Button("取消", role: .cancel) { pendingRetention = nil }
+        } message: { Text("废纸篓里有 \(pendingRetention?.count ?? 0) 个对话已经超过这个天数，会马上被彻底删除，不能恢复。") }
     }
 
     var list: some View {

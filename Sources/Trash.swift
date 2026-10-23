@@ -3,8 +3,10 @@ import AppKit
 
 /// 废纸篓里的一条：被删掉的对话记录，带上恢复需要的信息
 struct TrashEntry: Codable, Identifiable, Hashable {
-    var id: String { sessionId }
+    var id: String { storeKey ?? sessionId }
     let sessionId: String
+    var storeKey: String? = nil        // 废纸篓里的文件名（同一会话删多次也不互相覆盖）；旧数据为 nil = sessionId
+    var extraPaths: [String]? = nil    // 一起移进来的、被合并隐藏的旧会话文件原位置
     let title: String
     let cwd: String
     let originalPath: String       // 原来的会话记录文件位置（恢复时放回这里）
@@ -26,6 +28,8 @@ final class TrashStore: ObservableObject {
     }
 
     let dir: URL = {
+        // 仅用于测试：DUIHUATAI_TRASH_DIR 换一个目录，不碰真的废纸篓
+        if let t = ProcessInfo.processInfo.environment["DUIHUATAI_TRASH_DIR"] { return URL(fileURLWithPath: t, isDirectory: true) }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("com.likang.duihuatai/Trash", isDirectory: true)
     }()
@@ -50,8 +54,20 @@ final class TrashStore: ObservableObject {
         if let d = try? enc.encode(entries) { try? d.write(to: index, options: .atomic) }
     }
 
-    func storedFile(_ e: TrashEntry) -> URL { dir.appendingPathComponent(e.sessionId + ".jsonl") }
+    func storedFile(_ e: TrashEntry) -> URL { dir.appendingPathComponent(e.id + ".jsonl") }
     private func storedFolder(_ id: String) -> URL { dir.appendingPathComponent(id, isDirectory: true) }
+    private func partsFolder(_ e: TrashEntry) -> URL { dir.appendingPathComponent(e.id + ".parts", isDirectory: true) }
+
+    /// 文件和它同名的子代理文件夹一起挪
+    private static func moveWithSide(_ src: URL, to dst: URL) throws {
+        let fm = FileManager.default
+        try fm.moveItem(at: src, to: dst)
+        let side = src.deletingPathExtension(), dside = dst.deletingPathExtension()
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: side.path, isDirectory: &isDir), isDir.boolValue, !fm.fileExists(atPath: dside.path) {
+            try? fm.moveItem(at: side, to: dside)
+        }
+    }
 
     /// 这条还剩几天被自动清除（nil = 永久保留）
     func daysLeft(_ e: TrashEntry) -> Int? {
@@ -61,21 +77,25 @@ final class TrashStore: ObservableObject {
     }
 
     /// 移进废纸篓：会话记录文件，以及同名的子代理记录文件夹（如果有）
-    func add(sessionId: String, file: URL, title: String, cwd: String, wasPinned: Bool, customTitle: String?) throws {
+    func add(sessionId: String, file: URL, title: String, cwd: String, wasPinned: Bool, customTitle: String?, extraFiles: [URL] = []) throws {
         let fm = FileManager.default
-        let dst = dir.appendingPathComponent(sessionId + ".jsonl")
-        if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
-        try fm.moveItem(at: file, to: dst)
-        let sideFolder = file.deletingPathExtension()
+        let key = sessionId + "-" + String(Int(Date().timeIntervalSince1970 * 1000))
+        var e = TrashEntry(sessionId: sessionId, storeKey: key, title: title, cwd: cwd, originalPath: file.path,
+                           deletedAt: Date(), wasPinned: wasPinned, customTitle: customTitle)
+        try fm.moveItem(at: file, to: storedFile(e))
+        let side = file.deletingPathExtension()
         var isDir: ObjCBool = false
-        if fm.fileExists(atPath: sideFolder.path, isDirectory: &isDir), isDir.boolValue {
-            let d2 = storedFolder(sessionId)
-            try? fm.removeItem(at: d2)
-            try? fm.moveItem(at: sideFolder, to: d2)
+        if fm.fileExists(atPath: side.path, isDirectory: &isDir), isDir.boolValue {
+            try? fm.moveItem(at: side, to: storedFolder(key))
         }
-        entries.removeAll { $0.sessionId == sessionId }
-        entries.insert(TrashEntry(sessionId: sessionId, title: title, cwd: cwd, originalPath: file.path,
-                                  deletedAt: Date(), wasPinned: wasPinned, customTitle: customTitle), at: 0)
+        var moved: [String] = []
+        for (i, f) in extraFiles.enumerated() where fm.fileExists(atPath: f.path) {
+            try? fm.createDirectory(at: partsFolder(e), withIntermediateDirectories: true)
+            let d = partsFolder(e).appendingPathComponent("\(i)").appendingPathExtension("jsonl")
+            if (try? Self.moveWithSide(f, to: d)) != nil { moved.append(f.path) }
+        }
+        if !moved.isEmpty { e.extraPaths = moved }
+        entries.insert(e, at: 0)
         save()
     }
 
@@ -93,24 +113,35 @@ final class TrashStore: ObservableObject {
         if fm.fileExists(atPath: target.path) { throw RestoreError.exists(target.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
         try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.moveItem(at: storedFile(e), to: target)
-        let side = storedFolder(e.sessionId)
+        let side = storedFolder(e.id)
         if fm.fileExists(atPath: side.path) { try? fm.moveItem(at: side, to: target.deletingPathExtension()) }
-        entries.removeAll { $0.sessionId == e.sessionId }
+        for (i, p) in (e.extraPaths ?? []).enumerated() {
+            let src = partsFolder(e).appendingPathComponent("\(i)").appendingPathExtension("jsonl")
+            let dst = URL(fileURLWithPath: p)
+            if !fm.fileExists(atPath: dst.path) {
+                try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? Self.moveWithSide(src, to: dst)
+            }
+        }
+        try? fm.removeItem(at: partsFolder(e))
+        entries.removeAll { $0.id == e.id }
         save()
     }
 
     /// 彻底删除（不可恢复）
     func purge(_ e: TrashEntry) {
         try? FileManager.default.removeItem(at: storedFile(e))
-        try? FileManager.default.removeItem(at: storedFolder(e.sessionId))
-        entries.removeAll { $0.sessionId == e.sessionId }
+        try? FileManager.default.removeItem(at: storedFolder(e.id))
+        try? FileManager.default.removeItem(at: partsFolder(e))
+        entries.removeAll { $0.id == e.id }
         save()
     }
 
     func emptyAll() {
         for e in entries {
             try? FileManager.default.removeItem(at: storedFile(e))
-            try? FileManager.default.removeItem(at: storedFolder(e.sessionId))
+            try? FileManager.default.removeItem(at: storedFolder(e.id))
+            try? FileManager.default.removeItem(at: partsFolder(e))
         }
         entries = []
         save()

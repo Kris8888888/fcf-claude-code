@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Combine
 
 final class ChatSession: ObservableObject, Identifiable {
     let id = UUID()
@@ -17,7 +18,8 @@ final class ChatSession: ObservableObject, Identifiable {
     @Published var contextTokens = 0
     @Published var lastActive = Date()
     @Published var started = false
-    @Published var streamTick = 0          // 流式输出时递增，用来让列表跟着滚动
+    /// 流式输出时发一下，只用来让列表跟着滚动（不触发整个对话页重算）
+    let streamTicks = PassthroughSubject<Void, Never>()
     @Published var needsAttention = false  // 有等你回答/确认的卡片（侧栏蓝点）
     @Published var stalled = false         // 忙着但很久没收到任何消息，连接可能断了
 
@@ -33,7 +35,12 @@ final class ChatSession: ObservableObject, Identifiable {
     private var toolItems: [String: ChatItem] = [:]
     private var bashItems: [(cmd: String, item: ChatItem)] = []
     private var reqSeq = 0
-    private var turnStart = 0
+    /// 每发一条消息记下这一轮从 items 哪里开始；Claude 忙时也能继续发（排队），按先后对应各自的结果
+    private var turnStarts: [Int] = []
+    /// 还没收到结果的消息数：忙时又发了消息，第一条的结果回来时还不能算「空闲」
+    private var pendingTurns = 0
+    /// 消息按顺序编码后再发（带图的消息在后台编码，不卡界面，也不会被后发的文字插队）
+    private let sendQueue = DispatchQueue(label: "chat.send")
     private(set) var extraDirs: [String] = []
     private(set) var initInfo: [String: Any]?      // 后台启动时报告的信息（版本、MCP 状态等），状态面板用
     var pid: Int32? { proc?.pid }   // /add-dir 加进来的额外文件夹          // 本轮回复从 items 的哪里开始，用来收集文件产物
@@ -85,9 +92,11 @@ final class ChatSession: ObservableObject, Identifiable {
 
     private func processExited(code: Int32, output: String) {
         proc = nil
+        pendingTurns = 0
+        turnStarts.removeAll()
         let wasBusy = busy
         busy = false
-        status = ""
+        setStatus("")
         finishStreaming()
         cancelPending()
         for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
@@ -127,12 +136,18 @@ final class ChatSession: ObservableObject, Identifiable {
         addLocal("/add-dir", "已添加 `\(path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))`，从下一条消息开始 Claude 可以读写这个文件夹。")
     }
 
-    func shutdown() {
-        guard let p = proc else { return }
+    /// 状态文字没变就不赋值，免得每个事件都让界面重算
+    private func setStatus(_ v: String) { if status != v { status = v } }
+
+    /// wait: 退出 App 时同步结束；completion: 后台进程真正退出后调用（删除对话要等它停稳再挪文件）
+    func shutdown(wait: Bool = false, completion: (() -> Void)? = nil) {
+        guard let p = proc else { completion?(); return }
         p.onExit = nil
-        p.terminate()
+        p.terminate(wait: wait, completion: completion)
         proc = nil
         busy = false
+        pendingTurns = 0
+        turnStarts.removeAll()
         cancelPending()
     }
 
@@ -159,7 +174,7 @@ final class ChatSession: ObservableObject, Identifiable {
         shown.images = images
         shown.files = files
         items.append(shown)
-        turnStart = items.count
+        turnStarts.append(items.count)
         if title == "新对话" {
             title = ToolLabel.firstLine(text.isEmpty ? (files.first?.lastPathComponent ?? "图片") : text)
         }
@@ -176,20 +191,24 @@ final class ChatSession: ObservableObject, Identifiable {
             let ctx = doneBash.map { "<bash-input>\($0.cmd)</bash-input>\n<bash-stdout>\(String(($0.item.toolResult ?? "").suffix(20000)))</bash-stdout>" }
             prompt = ctx.joined(separator: "\n") + "\n\n" + prompt
         }
-        var content: Any = prompt
-        if !images.isEmpty {
-            var blocks: [[String: Any]] = images.compactMap { img in
-                guard let png = img.pngData else { return nil }
-                return ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": png.base64EncodedString()]]
+        guard ensureProcess() else { turnStarts.removeLast(); return }
+        let imgs = images
+        sendQueue.async { [weak self] in
+            var content: Any = prompt
+            if !imgs.isEmpty {
+                // 大截图转 PNG 要几百毫秒，放在后台做
+                var blocks: [[String: Any]] = imgs.compactMap { img in
+                    guard let png = img.pngData else { return nil }
+                    return ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": png.base64EncodedString()]]
+                }
+                if !prompt.isEmpty { blocks.append(["type": "text", "text": prompt]) }
+                content = blocks
             }
-            if !prompt.isEmpty { blocks.append(["type": "text", "text": prompt]) }
-            content = blocks
+            DispatchQueue.main.async { self?.proc?.send(["type": "user", "message": ["role": "user", "content": content]]) }
         }
-        guard ensureProcess() else { return }
-        proc?.send(["type": "user", "message": ["role": "user", "content": content]])
+        pendingTurns += 1
         busy = true
-        interrupted = false
-        status = "等待回复"
+        setStatus("等待回复")
         lastActive = Date()
         startWatchdog()
     }
@@ -208,11 +227,14 @@ final class ChatSession: ObservableObject, Identifiable {
     private func checkStall() {
         guard busy else { watchdog?.invalidate(); watchdog = nil; stalled = false; return }
         // 等你回答、或工具（比如长时间跑的命令）还在执行时没消息是正常的
-        if needsAttention || toolItems.values.contains(where: { $0.toolState == .running }) {
+        // 子代理（Task/Agent）跑着时网络照样可能断，不能无限期豁免，只放宽时间
+        let running = toolItems.values.filter { $0.toolState == .running }
+        let agentOnly = !running.isEmpty && running.allSatisfy { ["Task", "Agent"].contains($0.toolName) }
+        if needsAttention || (!running.isEmpty && !agentOnly) {
             lastEventAt = Date(); return
         }
         // 正在思考时后端不返回思考内容，给更长的时间
-        let limit = thinkingItem != nil ? Self.stallAfter * 2.5 : Self.stallAfter
+        let limit = agentOnly ? Self.stallAfter * 5 : thinkingItem != nil ? Self.stallAfter * 2.5 : Self.stallAfter
         let s = Date().timeIntervalSince(lastEventAt) > limit
         if s != stalled { stalled = s }
     }
@@ -239,7 +261,7 @@ final class ChatSession: ObservableObject, Identifiable {
         shutdown()
         finishStreaming()
         for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
-        status = ""
+        setStatus("")
         stalled = false
     }
 
@@ -247,7 +269,7 @@ final class ChatSession: ObservableObject, Identifiable {
         guard busy else { return }
         control(["subtype": "interrupt"])
         interrupted = true
-        status = "正在停止"
+        setStatus("正在停止")
     }
 
     func setMode(_ m: PermissionMode) {
@@ -326,7 +348,7 @@ final class ChatSession: ObservableObject, Identifiable {
     private func respond(_ requestId: String, _ response: [String: Any]) {
         proc?.send(["type": "control_response",
                     "response": ["subtype": "success", "request_id": requestId, "response": response]])
-        status = "继续中"
+        setStatus("继续中")
     }
 
     /// 回合结束或进程退出后，还没处理的提问/确认都作废，避免点了发给不存在的请求
@@ -348,7 +370,7 @@ final class ChatSession: ObservableObject, Identifiable {
         guard !deltaBuf.isEmpty else { return }
         streamingItem?.text += deltaBuf
         deltaBuf = ""
-        streamTick += 1
+        streamTicks.send()
     }
 
     private func finishStreaming() {
@@ -376,10 +398,10 @@ final class ChatSession: ObservableObject, Identifiable {
         case "assistant":
             guard let msg = e["message"] as? [String: Any], let blocks = msg["content"] as? [[String: Any]] else { return }
             if let parent { subagentStep(parent: parent, blocks: blocks); return }
-            if let m = msg["model"] as? String { activeModel = m }
+            if let m = msg["model"] as? String, m != activeModel { activeModel = m }
             if let u = msg["usage"] as? [String: Any] {
                 let n = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].reduce(0) { $0 + ((u[$1] as? Int) ?? 0) }
-                if n > 0 { contextTokens = n }
+                if n > 0 && n != contextTokens { contextTokens = n }
             }
             for b in blocks { assistantBlock(b) }
         case "user":
@@ -397,17 +419,18 @@ final class ChatSession: ObservableObject, Identifiable {
             finishStreaming()
             cancelPending()
             // 这一轮里新建 / 修改的文件，作为产物卡片放在回复末尾
-            if turnStart <= items.count {
-                let arts = Artifacts.collect(items[turnStart...])
+            let start = turnStarts.isEmpty ? items.count : turnStarts.removeFirst()
+            if start <= items.count {
+                let arts = Artifacts.collect(items[start...])
                 if !arts.isEmpty {
                     let it = ChatItem(.artifacts)
                     it.artifacts = arts
                     items.append(it)
                 }
-                turnStart = items.count
             }
-            busy = false
-            status = ""
+            pendingTurns = max(0, pendingTurns - 1)
+            busy = pendingTurns > 0          // 后面还有排队的消息就继续算「忙」
+            setStatus(busy ? "等待回复" : "")
             lastActive = Date()
             if let c = e["total_cost_usd"] as? Double {
                 UsageStore.shared.addCost(c - costUSD)
@@ -419,7 +442,8 @@ final class ChatSession: ObservableObject, Identifiable {
             }
             for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest); NSSound(named: "Glass")?.play() }
-            if (e["is_error"] as? Bool) != true && !interrupted { Notifier.shared.taskDone(self) }
+            if (e["is_error"] as? Bool) != true && !interrupted && !busy { Notifier.shared.taskDone(self) }
+            if !busy { interrupted = false }     // 手动停止只对这一批消息有效
         case "rate_limit_event":
             if let info = e["rate_limit_info"] as? [String: Any] { UsageStore.shared.update(info) }
         case "control_request":
@@ -467,14 +491,14 @@ final class ChatSession: ObservableObject, Identifiable {
                 it.streaming = true
                 items.append(it)
                 streamingItem = it
-                status = "回复中"
+                setStatus("回复中")
             case "thinking":
                 finishStreaming()
                 let it = ChatItem(.thinking)
                 it.streaming = true
                 items.append(it)
                 thinkingItem = it
-                status = "思考中"
+                setStatus("思考中")
             case "tool_use": status = "准备工具"
             default: break
             }
@@ -510,7 +534,7 @@ final class ChatSession: ObservableObject, Identifiable {
                 deltaBuf = ""
                 it.text = t
                 finishStreaming()
-                streamTick += 1
+                streamTicks.send()
             } else if !t.isEmpty {
                 items.append(ChatItem(.assistant, t))
             }
@@ -522,7 +546,7 @@ final class ChatSession: ObservableObject, Identifiable {
             let it = ChatItem.tool(id: id, name: name, input: b["input"] as? [String: Any] ?? [:])
             toolItems[id] = it
             items.append(it)
-            status = ToolLabel.firstLine(it.text)
+            setStatus(ToolLabel.firstLine(it.text))
         default: break
         }
     }
@@ -548,10 +572,10 @@ final class ChatSession: ObservableObject, Identifiable {
         let it: ChatItem
         if name == "AskUserQuestion" {
             it = ChatItem(.question, "")
-            status = "等你回答"
+            setStatus("等你回答")
         } else {
             it = ChatItem(.permission, ToolLabel.summary(name: name, input: input))
-            status = "等你确认"
+            setStatus("等你确认")
         }
         it.requestId = rid
         it.toolName = name
@@ -561,7 +585,13 @@ final class ChatSession: ObservableObject, Identifiable {
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest); NSSound(named: "Ping")?.play() }
     }
 
+    /// 工具结果只保留界面会显示的前 2 万字，读大文件、长命令输出时不把整份留在内存里
     static func resultText(_ c: Any?) -> String {
+        let full = rawResultText(c)
+        return full.count > 20000 ? String(full.prefix(20000)) + "\n…（还有 \(full.count - 20000) 字没有显示）" : full
+    }
+
+    static func rawResultText(_ c: Any?) -> String {
         if let s = c as? String { return s }
         if let arr = c as? [[String: Any]] {
             return arr.map { b in

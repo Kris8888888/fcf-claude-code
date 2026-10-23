@@ -113,9 +113,12 @@ final class ClaudeProcess {
 
     private func consume(_ d: Data) {
         buffer.append(d)
-        while let nl = buffer.firstIndex(of: 0x0A) {
-            let line = buffer.subdata(in: buffer.startIndex..<nl)
-            buffer.removeSubrange(buffer.startIndex...nl)
+        // 按位置往后读，一块数据处理完再统一丢掉已读部分（以前每读一行就把剩下的数据整体挪一次）
+        var start = buffer.startIndex
+        defer { if start > buffer.startIndex { buffer.removeSubrange(buffer.startIndex..<start) } }
+        while let nl = buffer[start...].firstIndex(of: 0x0A) {
+            let line = Data(buffer[start..<nl])
+            start = buffer.index(after: nl)
             // FCF 会先打印一段横幅，非 JSON 行直接跳过
             guard line.first == UInt8(ascii: "{"),
                   let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
@@ -133,15 +136,27 @@ final class ClaudeProcess {
     }
 
     /// FCF 包装脚本不会把信号转给真正的 claude，所以要把整棵进程树一起结束
-    func terminate() {
+    /// 结束整棵进程树。默认在后台做（查子进程要跑 pgrep，放界面线程会卡一下）；
+    /// 退出 App 时用 wait: true 同步做完；completion 在进程真正退出后回到主线程调用
+    func terminate(wait: Bool = false, completion: (() -> Void)? = nil) {
         try? input?.close()
-        if let p = proc, p.isRunning {
-            let pids = Self.descendants(of: p.processIdentifier)
-            p.terminate()
-            for pid in pids { kill(pid, SIGTERM) }
-        }
+        let p = proc
         proc = nil
         input = nil
+        let work = {
+            if let p, p.isRunning {
+                let pids = Self.descendants(of: p.processIdentifier)
+                p.terminate()
+                for pid in pids { kill(pid, SIGTERM) }
+                // 最多等 3 秒确认退出，还在就强制结束
+                let deadline = Date().addingTimeInterval(3)
+                while p.isRunning && Date() < deadline { usleep(50_000) }
+                if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+                for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+            }
+            if let completion { DispatchQueue.main.async(execute: completion) }
+        }
+        if wait { work() } else { DispatchQueue.global(qos: .utility).async(execute: work) }
     }
 
     static func descendants(of pid: Int32) -> [Int32] {

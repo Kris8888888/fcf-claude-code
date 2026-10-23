@@ -61,6 +61,8 @@ final class Updater: ObservableObject {
 
     func check(manual: Bool) {
         switch state { case .checking, .downloading, .installing: return; default: break }
+        // 定时自动检查不要冲掉正在显示的「有新版本」「更新失败」卡片
+        if !manual { switch state { case .available, .failed: return; default: break } }
         state = .checking
         DispatchQueue.global(qos: .utility).async {
             let result = Self.fetchLatest()
@@ -108,7 +110,7 @@ final class Updater: ObservableObject {
               let name = zip["name"] as? String else {
             return .failure(UpdateError(msg: "新版本 \(tag) 里没有安装包"))
         }
-        let ver = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        let ver = (tag.hasPrefix("v") || tag.hasPrefix("V")) ? String(tag.dropFirst()) : tag
         return .success(Release(tag: tag, version: ver, notes: j["body"] as? String ?? "", zipName: name,
                                 zipURL: zip["browser_download_url"] as? String ?? "", page: j["html_url"] as? String ?? ""))
     }
@@ -203,12 +205,16 @@ final class Updater: ObservableObject {
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         let script = work.appendingPathComponent("install.sh")
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let dl = newApp.deletingLastPathComponent().deletingLastPathComponent()
+        let cleanup = dl.lastPathComponent.hasPrefix("duihuatai-update-") ? "rm -rf \(q(dl.path)); " : ""
         let body = """
         #!/bin/bash
-        for i in $(seq 1 100); do kill -0 \(pid) 2>/dev/null || break; sleep 0.2; done
         T=\(q(target))
+        # 等旧版退出（最多 60 秒）；还没退就别动文件，原样重新打开
+        for i in $(seq 1 300); do kill -0 \(pid) 2>/dev/null || break; sleep 0.2; done
+        if kill -0 \(pid) 2>/dev/null; then open "$T"; exit 1; fi
         rm -rf "$T.old"
-        if [ -e "$T" ]; then mv "$T" "$T.old" || exit 1; fi
+        if [ -e "$T" ] && ! mv "$T" "$T.old"; then open "$T"; exit 1; fi
         if /usr/bin/ditto \(q(newApp.path)) "$T"; then
           rm -rf "$T.old"
           /usr/bin/xattr -dr com.apple.quarantine "$T" 2>/dev/null
@@ -216,6 +222,8 @@ final class Updater: ObservableObject {
           rm -rf "$T"; [ -e "$T.old" ] && mv "$T.old" "$T"
         fi
         open "$T"
+        # 清掉下载、解压和这个脚本的临时文件
+        \(cleanup)rm -rf \(q(work.path))
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         let p = Process()
