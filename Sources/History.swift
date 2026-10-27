@@ -69,10 +69,32 @@ enum History {
         }
     }
 
+    /// 粗查：这段开头里有没有一条完整的「你发的消息」（不解析 JSON，只找标记）
+    static func hasUserPrompt(_ d: Data) -> Bool {
+        d.range(of: Data("\"type\":\"user\"".utf8)) != nil
+    }
+
     static func entry(url: URL, modified: Date) -> HistoryEntry? {
         guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? h.close() }
-        let head = h.readData(ofLength: 256 * 1024)
+        // 开头读 256KB 找标题。第一条消息带大截图时一行就有几百 KB，会被从中间截断、读不出内容，
+        // 整个对话就从列表里消失了（重启后才暴露）。所以把截断的那一行读完整；还没找到第一条消息就继续往后读，最多 16MB
+        var head = h.readData(ofLength: 256 * 1024)
+        func readToLineEnd() {
+            while head.last != 0x0A, head.count < 16 * 1024 * 1024 {
+                let d = h.readData(ofLength: 1024 * 1024)
+                if d.isEmpty { break }
+                if let i = d.firstIndex(of: 0x0A) { head.append(d[d.startIndex...i]); break }
+                head.append(d)
+            }
+        }
+        readToLineEnd()
+        while !Self.hasUserPrompt(head), head.count < 16 * 1024 * 1024 {
+            let more = h.readData(ofLength: 512 * 1024)
+            if more.isEmpty { break }
+            head.append(more)
+            readToLineEnd()
+        }
         let size = (try? h.seekToEnd()) ?? 0
         let tailStart = size > 128 * 1024 ? size - 128 * 1024 : 0
         try? h.seek(toOffset: tailStart)
