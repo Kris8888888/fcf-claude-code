@@ -1,24 +1,27 @@
 import AppKit
-// 应用图标：靛蓝底 + 一条活动轨（竖线串三个节点），呼应界面里的工具步骤轨
+// 应用图标：深青底 + 米白对话气泡，气泡里是终端提示符 >_ ——「终端变成对话」
+func C(_ h: UInt32) -> NSColor { NSColor(srgbRed: CGFloat(h >> 16 & 0xFF)/255, green: CGFloat(h >> 8 & 0xFF)/255, blue: CGFloat(h & 0xFF)/255, alpha: 1) }
 func draw(size s: CGFloat) -> NSImage {
     let img = NSImage(size: NSSize(width: s, height: s)); img.lockFocus()
     let inset = s * 0.075
     let bg = NSBezierPath(roundedRect: NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2), xRadius: s * 0.205, yRadius: s * 0.205)
-    NSGradient(starting: NSColor(srgbRed: 0x45/255, green: 0x58/255, blue: 0xCC/255, alpha: 1),
-               ending: NSColor(srgbRed: 0x26/255, green: 0x34/255, blue: 0x8F/255, alpha: 1))!.draw(in: bg, angle: -90)
-    let x = s * 0.36
-    let line = NSBezierPath(); line.move(to: NSPoint(x: x, y: s * 0.24)); line.line(to: NSPoint(x: x, y: s * 0.76))
-    line.lineWidth = s * 0.025; NSColor(white: 1, alpha: 0.45).setStroke(); line.stroke()
-    let ys: [CGFloat] = [0.70, 0.50, 0.30]
-    let widths: [CGFloat] = [0.30, 0.22, 0.26]
-    for (i, y) in ys.enumerated() {
-        let r = s * 0.045
-        (i == 1 ? NSColor(srgbRed: 0xF2/255, green: 0xB4/255, blue: 0x4A/255, alpha: 1) : NSColor.white).setFill()
-        NSBezierPath(ovalIn: NSRect(x: x - r, y: s * y - r, width: r * 2, height: r * 2)).fill()
-        let h = s * 0.05
-        NSColor(white: 1, alpha: 0.85).setFill()
-        NSBezierPath(roundedRect: NSRect(x: x + s * 0.08, y: s * y - h / 2, width: s * widths[i], height: h), xRadius: h / 2, yRadius: h / 2).fill()
-    }
+    NSGradient(starting: C(0x1F6F78), ending: C(0x0E3B43))!.draw(in: bg, angle: -90)
+    // 气泡（带左下角小尾巴），下方一层淡阴影让它浮起来
+    let bubble = NSBezierPath(roundedRect: NSRect(x: s * 0.20, y: s * 0.30, width: s * 0.60, height: s * 0.44), xRadius: s * 0.13, yRadius: s * 0.13)
+    let tail = NSBezierPath(); tail.move(to: NSPoint(x: s * 0.30, y: s * 0.33)); tail.line(to: NSPoint(x: s * 0.26, y: s * 0.20)); tail.line(to: NSPoint(x: s * 0.42, y: s * 0.31)); tail.close()
+    bubble.append(tail)
+    NSGraphicsContext.saveGraphicsState()
+    let sh = NSShadow(); sh.shadowColor = NSColor(white: 0, alpha: 0.28); sh.shadowBlurRadius = s * 0.025; sh.shadowOffset = NSSize(width: 0, height: -s * 0.012); sh.set()
+    C(0xF6F1E4).setFill(); bubble.fill()
+    NSGraphicsContext.restoreGraphicsState()
+    // >
+    let chevron = NSBezierPath()
+    chevron.move(to: NSPoint(x: s * 0.33, y: s * 0.60)); chevron.line(to: NSPoint(x: s * 0.42, y: s * 0.52)); chevron.line(to: NSPoint(x: s * 0.33, y: s * 0.44))
+    chevron.lineWidth = s * 0.055; chevron.lineCapStyle = .round; chevron.lineJoinStyle = .round
+    C(0x0E3B43).setStroke(); chevron.stroke()
+    // _ 光标（琥珀色）
+    C(0xF2A93B).setFill()
+    NSBezierPath(roundedRect: NSRect(x: s * 0.48, y: s * 0.415, width: s * 0.18, height: s * 0.055), xRadius: s * 0.02, yRadius: s * 0.02).fill()
     img.unlockFocus(); return img
 }
 let out = CommandLine.arguments[1]
