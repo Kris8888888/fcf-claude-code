@@ -442,7 +442,7 @@ final class ChatSession: ObservableObject, Identifiable {
             let start = turnStarts.first ?? items.count
             turnStarts.removeAll()
             if start <= items.count {
-                let arts = Artifacts.collect(items[start...])
+                let arts = Artifacts.collect(items[start...], since: items.indices.contains(start - 1) ? items[start - 1].startedAt : Date().addingTimeInterval(-3600))
                 if !arts.isEmpty {
                     let it = ChatItem(.artifacts)
                     it.artifacts = arts

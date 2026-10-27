@@ -168,7 +168,7 @@ enum Artifacts {
     static let claudeHome = NSString(string: "~/.claude").expandingTildeInPath
 
     /// 从一段工具步骤里挑出产物：去重、只要成功的、排除 Claude 自己的配置和记忆
-    static func collect(_ items: ArraySlice<ChatItem>) -> [Artifact] {
+    static func collect(_ items: ArraySlice<ChatItem>, since: Date? = nil) -> [Artifact] {
         var out: [Artifact] = []
         var seen = Set<String>()
         for it in items where it.kind == .tool && it.toolState != .failed {
@@ -188,7 +188,45 @@ enum Artifacts {
             }
             if seen.insert(path).inserted { out.append(Artifact(url: URL(fileURLWithPath: path), created: created)) }
         }
+        if let since { appendShellOutputs(items, since: since, into: &out) }
         return out
+    }
+
+    /// 用命令行生成的文件（打包 zip、cp、导出等）不走「写文件」工具，单靠 Write/Edit 认不出来。
+    /// 从这一轮的命令和 Claude 的回复里找出提到的路径：在你的个人文件夹里、确实存在、而且是这一轮里新建或改过的，才算产物
+    static func appendShellOutputs(_ items: ArraySlice<ChatItem>, since: Date, into out: inout [Artifact]) {
+        var texts: [String] = []
+        for it in items {
+            if it.kind == .tool, it.toolName == "Bash", it.toolState != .failed, let c = it.toolInput["command"] as? String { texts.append(c) }
+            if it.kind == .assistant { texts.append(it.text) }
+        }
+        let home = NSHomeDirectory(), fm = FileManager.default
+        var found: [String] = []
+        let patterns = [#""((?:~|/Users)/[^"\n]+)""#, #"'((?:~|/Users)/[^'\n]+)'"#, #"`((?:~|/Users)/[^`\n]+)`"#,
+                        #"((?:~|/Users)/[^\s"'`，。、；：！？）)」』\]]+)"#]
+        for t in texts {
+            for p in patterns {
+                guard let re = try? NSRegularExpression(pattern: p) else { continue }
+                for m in re.matches(in: t, range: NSRange(t.startIndex..., in: t)) {
+                    if let r = Range(m.range(at: 1), in: t) { found.append(String(t[r])) }
+                }
+            }
+        }
+        var added = 0
+        for raw in found {
+            let path = ((raw as NSString).expandingTildeInPath as NSString).standardizingPath
+            guard path.hasPrefix(home + "/"), !path.hasPrefix(claudeHome + "/"), !path.hasPrefix(home + "/Library/"),
+                  !path.split(separator: "/").contains(where: { $0.hasPrefix(".") }),
+                  !out.contains(where: { $0.url.path == path }) else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue,
+                  let attrs = try? fm.attributesOfItem(atPath: path),
+                  let mod = attrs[.modificationDate] as? Date, mod >= since.addingTimeInterval(-2) else { continue }
+            let created = ((attrs[.creationDate] as? Date) ?? .distantPast) >= since.addingTimeInterval(-2)
+            out.append(Artifact(url: URL(fileURLWithPath: path), created: created))
+            added += 1
+            if added >= 12 { break }
+        }
     }
 
     static func open(_ url: URL) {

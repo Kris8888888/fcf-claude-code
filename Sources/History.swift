@@ -158,10 +158,12 @@ enum History {
         var tools: [String: ChatItem] = [:]
         var title: String?
         var turnStart = 0
+        var turnTime: Date?             // 这一轮你发消息的时间，用来判断命令生成的文件是不是这一轮做的
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         // 一轮结束（下一条你的消息之前 / 文件末尾）把这一轮的产物补成卡片
         func flushArtifacts() {
             guard turnStart <= items.count else { return }
-            let arts = Artifacts.collect(items[turnStart...])
+            let arts = Artifacts.collect(items[turnStart...], since: turnTime)
             if !arts.isEmpty {
                 let it = ChatItem(.artifacts)
                 it.artifacts = arts
@@ -219,6 +221,7 @@ enum History {
                 u.images = imgs
                 items.append(u)
                 turnStart = items.count
+                turnTime = (o["timestamp"] as? String).flatMap { iso.date(from: $0) }
             } else {
                 for b in (m["content"] as? [[String: Any]]) ?? [] {
                     switch b["type"] as? String {
