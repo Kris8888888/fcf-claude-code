@@ -89,9 +89,31 @@ enum MarkdownParser {
         let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace,
                                                            failurePolicy: .returnPartiallyParsedIfPossible)
         var a = (try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s)
+        // 标准规则下，「是**「标题」**，」这种加粗紧挨中文标点时不算加粗，星号会原样露出来。
+        // 解析完还剩 ** 就自己补一遍：把成对的 **…** 先换成占位符再解析，最后加粗
+        if String(a.characters).contains("**") { a = boldFallback(s, opts: opts) ?? a }
         for run in a.runs where run.inlinePresentationIntent?.contains(.code) == true {
             a[run.range].font = .system(size: fs(13), design: .monospaced)
             a[run.range].backgroundColor = T.sunk
+        }
+        return a
+    }
+
+    private static func boldFallback(_ s: String, opts: AttributedString.MarkdownParsingOptions) -> AttributedString? {
+        let open = "\u{E000}", close = "\u{E001}"
+        // 只处理代码片段（`…`）以外的部分
+        var pre = ""
+        for (i, part) in s.components(separatedBy: "`").enumerated() {
+            if i > 0 { pre += "`" }
+            pre += i % 2 == 1 ? part : part.replacingOccurrences(of: #"\*\*([^*\n]+?)\*\*"#, with: open + "$1" + close, options: .regularExpression)
+        }
+        guard pre != s, var a = try? AttributedString(markdown: pre, options: opts) else { return nil }
+        while let o = a.range(of: open), let c = a[o.upperBound...].range(of: close) {
+            var intent = a[o.upperBound..<c.lowerBound].inlinePresentationIntent ?? []
+            intent.insert(.stronglyEmphasized)
+            a[o.upperBound..<c.lowerBound].inlinePresentationIntent = intent
+            a.removeSubrange(c)
+            a.removeSubrange(o)
         }
         return a
     }

@@ -103,6 +103,8 @@ struct Transcript: View {
     @State private var atBottom = true
     @State private var viewport: CGFloat = 0
     @State private var openGroups: Set<UUID> = []
+    /// 进对话时只先画最近这些段：几百条一起排，跳到底部时会先空白一阵
+    @State private var shown = 60
 
     /// 连续 4 步以上的工具/思考折叠成一组，长任务不刷屏
     enum Row: Identifiable {
@@ -146,17 +148,34 @@ struct Transcript: View {
             ScrollView {
                 VStack(spacing: 0) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(rows) { row in
+                    let all = rows
+                    if all.count > shown {
+                        Button {
+                            // 展开后停在原来看的位置，不跳走
+                            let keep = all[all.count - shown].id
+                            shown += 80
+                            DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) }
+                        } label: {
+                            Text("显示更早的内容（还有 \(all.count - shown) 段）")
+                                .font(.system(size: fs(12))).foregroundStyle(T.muted)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(Capsule().fill(T.line.opacity(0.5)))
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 16)
+                    }
+                    ForEach(all.suffix(shown)) { row in
                         switch row {
                         case .single(let item):
-                            ItemRow(item: item, session: session).id(item.id)
+                            ItemRow(item: item, session: session).id(row.id)
                         case .group(let g):
                             StepGroup(items: g, open: Binding(
                                 get: { openGroups.contains(g[0].id) },
                                 set: { if $0 { openGroups.insert(g[0].id) } else { openGroups.remove(g[0].id) } }))
-                            .id(g[0].id)
+                            .id(row.id)
                         case .copy(let replies):
-                            Rail { CopyReplyButton(replies: replies) }
+                            Rail { CopyReplyButton(replies: replies) }.id(row.id)
                         }
                     }
                     // 卡住时一定要显示提示：最容易卡住的就是「思考中」或回复写到一半，这时最后一条正在输出
