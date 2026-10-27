@@ -108,10 +108,12 @@ struct Transcript: View {
     enum Row: Identifiable {
         case single(ChatItem)
         case group([ChatItem])
-        var id: UUID {
+        case copy([ChatItem])       // 一轮回复结束后的「复制」按钮，带着这一轮所有的回复
+        var id: String {
             switch self {
-            case .single(let i): return i.id
-            case .group(let g): return g[0].id
+            case .single(let i): return i.id.uuidString
+            case .group(let g): return g[0].id.uuidString
+            case .copy(let r): return "copy-" + r[0].id.uuidString
             }
         }
     }
@@ -123,10 +125,19 @@ struct Transcript: View {
             if run.filter({ $0.kind == .tool }).count >= 4 { out.append(.group(run)) } else { out += run.map { .single($0) } }
             run = []
         }
+        var replies: [ChatItem] = []
+        func endTurn() {
+            if !replies.isEmpty { out.append(.copy(replies)) }
+            replies = []
+        }
         for it in session.items {
+            if it.kind == .user { flush(); endTurn() }
+            if it.kind == .assistant && !it.text.isEmpty { replies.append(it) }
             if it.kind == .tool || it.kind == .thinking { run.append(it) } else { flush(); out.append(.single(it)) }
         }
         flush()
+        // 最后一轮还在回复时先不放复制按钮，答完再出现
+        if !session.busy { endTurn() }
         return out
     }
 
@@ -144,6 +155,8 @@ struct Transcript: View {
                                 get: { openGroups.contains(g[0].id) },
                                 set: { if $0 { openGroups.insert(g[0].id) } else { openGroups.remove(g[0].id) } }))
                             .id(g[0].id)
+                        case .copy(let replies):
+                            Rail { CopyReplyButton(replies: replies) }
                         }
                     }
                     // 卡住时一定要显示提示：最容易卡住的就是「思考中」或回复写到一半，这时最后一条正在输出
@@ -276,6 +289,41 @@ struct Rail<Content: View>: View {
             content.padding(.vertical, 6)
             Spacer(minLength: 0)
         }
+    }
+}
+
+/// 一轮回复末尾的「复制」：把这一轮 Claude 写的所有内容按 Markdown 原文复制，贴到别处格式不乱
+struct CopyReplyButton: View {
+    let replies: [ChatItem]
+    @State private var copied = false
+    @State private var hover = false
+
+    var body: some View {
+        Button {
+            let md = replies.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: "\n\n")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(md, forType: .string)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: copied ? "checkmark" : "square.on.square")
+                    .font(.system(size: fs(13), weight: .medium))
+                if copied { Text("已复制").font(.system(size: fs(12))) }
+            }
+            .foregroundStyle(copied ? T.ok : (hover ? T.ink : T.muted))
+            .padding(.horizontal, copied ? 9 : 0)
+            .frame(minWidth: 28, minHeight: 28)
+            .background(RoundedRectangle(cornerRadius: 7).fill(hover || copied ? T.line.opacity(0.6) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .help("复制（Markdown 格式）")
+        .animation(.easeOut(duration: 0.15), value: copied)
+        .padding(.leading, -7)      // 图标和上面的正文左边对齐
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
