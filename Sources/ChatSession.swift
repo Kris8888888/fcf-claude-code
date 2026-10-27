@@ -50,6 +50,7 @@ final class ChatSession: ObservableObject, Identifiable {
     private var deltaBuf = ""
     private var flushScheduled = false
     private(set) var lastEventAt = Date()
+    private var resultGen = 0
     private var interrupted = false        // 本轮是你手动停的，不发完成通知
     private var watchdog: Timer?
     /// 多久没消息算卡住（秒）；DUIHUATAI_STALL_SECONDS 仅用于测试
@@ -402,6 +403,13 @@ final class ChatSession: ObservableObject, Identifiable {
     private func handle(_ e: [String: Any]) {
         let type = e["type"] as? String ?? ""
         let parent = e["parent_tool_use_id"] as? String
+        // 一轮结束后 Claude 又开始输出：说明你在它忙时发的消息被单独排成了下一轮，重新算「忙」
+        if !busy, type == "stream_event" || type == "assistant" {
+            busy = true
+            turnStarts.append(items.count)
+            setStatus("回复中")
+            startWatchdog()
+        }
         switch type {
         case "system": handleSystem(e)
         case "stream_event":
@@ -431,7 +439,8 @@ final class ChatSession: ObservableObject, Identifiable {
             finishStreaming()
             cancelPending()
             // 这一轮里新建 / 修改的文件，作为产物卡片放在回复末尾
-            let start = turnStarts.isEmpty ? items.count : turnStarts.removeFirst()
+            let start = turnStarts.first ?? items.count
+            turnStarts.removeAll()
             if start <= items.count {
                 let arts = Artifacts.collect(items[start...])
                 if !arts.isEmpty {
@@ -440,9 +449,11 @@ final class ChatSession: ObservableObject, Identifiable {
                     items.append(it)
                 }
             }
-            pendingTurns = max(0, pendingTurns - 1)
-            busy = pendingTurns > 0          // 后面还有排队的消息就继续算「忙」
-            setStatus(busy ? "等待回复" : "")
+            // 以 Claude 的「本轮结束」为准：你在它忙时发的消息常被并进同一轮回答，只会回来一次结束信号，
+            // 按发送条数计数会一直转圈。如果确实还有单独排队的一轮，它开始输出时会重新进入「忙」
+            pendingTurns = 0
+            busy = false
+            setStatus("")
             lastActive = Date()
             if let c = e["total_cost_usd"] as? Double {
                 UsageStore.shared.addCost(c - costUSD)
@@ -454,8 +465,15 @@ final class ChatSession: ObservableObject, Identifiable {
             }
             for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest); NSSound(named: "Glass")?.play() }
-            if (e["is_error"] as? Bool) != true && !interrupted && !busy { Notifier.shared.taskDone(self) }
-            if !busy { interrupted = false }     // 手动停止只对这一批消息有效
+            // 完成通知稍等一下再发：排队的下一轮马上开始的话就不算完成
+            let ok = (e["is_error"] as? Bool) != true && !interrupted
+            resultGen += 1
+            let gen = resultGen
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, gen == self.resultGen, !self.busy else { return }
+                if ok { Notifier.shared.taskDone(self) }
+                self.interrupted = false     // 手动停止只对这一批消息有效
+            }
         case "rate_limit_event":
             if let info = e["rate_limit_info"] as? [String: Any] { UsageStore.shared.update(info) }
         case "control_request":
