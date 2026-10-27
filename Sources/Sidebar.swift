@@ -144,7 +144,8 @@ struct Sidebar: View {
         let sel = app.isSelected(r)
         return Button { app.select(r) } label: {
             SidebarRowLabel(title: r.title, time: pinned ? folderName(r.cwd) : relative(r.date), selected: sel,
-                            dot: r.live?.needsAttention == true ? T.accent : r.busy ? T.run : nil)
+                            dot: r.live?.needsAttention == true ? T.accent : r.busy ? T.run : nil,
+                            note: app.contentOnlyMatch(r) ? "内容里提到「\(app.search.trimmingCharacters(in: .whitespaces))」" : nil)
         }
         .buttonStyle(.plain)
         .help(r.live?.needsAttention == true ? "Claude 在等你回答" : r.busy ? "Claude 正在处理" : r.title)
@@ -195,13 +196,17 @@ struct SidebarRowLabel: View {
     let time: String
     let selected: Bool
     let dot: Color?
+    var note: String? = nil         // 搜索时：标题没对上、是靠内容搜到的
     @State private var hover = false
     var body: some View {
-        HStack(spacing: 6) {
-            if let dot { Circle().fill(dot).frame(width: 6, height: 6) }
-            Text(title).font(.system(size: fs(13), weight: selected ? .medium : .regular)).foregroundStyle(T.ink).lineLimit(1)
-            Spacer(minLength: 4)
-            Text(time).font(.system(size: fs(11))).foregroundStyle(T.muted)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                if let dot { Circle().fill(dot).frame(width: 6, height: 6) }
+                Text(title).font(.system(size: fs(13), weight: selected ? .medium : .regular)).foregroundStyle(T.ink).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(time).font(.system(size: fs(11))).foregroundStyle(T.muted)
+            }
+            if let note { Text(note).font(.system(size: fs(11))).foregroundStyle(T.muted).lineLimit(1) }
         }
         .padding(.leading, 28).padding(.trailing, 8).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? T.line.opacity(0.9) : hover ? T.line.opacity(0.45) : Color.clear))

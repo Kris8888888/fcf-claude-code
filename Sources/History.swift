@@ -69,6 +69,52 @@ enum History {
         }
     }
 
+    /// 在会话记录里找搜索词（直接按字节查，几十 MB 的记录也很快）。英文不区分大小写。
+    /// cancelled 返回 true 时提前停（你又改了搜索词）
+    static func search(_ q: String, in files: [(String, URL)], cancelled: () -> Bool) -> Set<String> {
+        var needles = [q, q.uppercased(), q.capitalized].map { Data($0.utf8) }
+        // JSON 里换行、引号是转义过的，搜索词里一般没有，不额外处理
+        needles = Array(Set(needles))
+        var out = Set<String>()
+        for (i, (sid, url)) in files.enumerated() {
+            if out.contains(sid) { continue }
+            if i % 8 == 0, cancelled() { return out }
+            guard let d = try? Data(contentsOf: url, options: .alwaysMapped) else { continue }
+            if needles.contains(where: { realHit($0, in: d) }) { out.insert(sid) }
+        }
+        return out
+    }
+
+    /// 命中要算数：在你或 Claude 的对话行里（不是系统附件、记忆注入），而且不是夹在图片编码这种长串字母数字中间
+    private static func realHit(_ n: Data, in d: Data) -> Bool {
+        let b64: (UInt8) -> Bool = { c in (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 43 || c == 47 || c == 61 }
+        let userTag = Data("\"type\":\"user\"".utf8), aiTag = Data("\"type\":\"assistant\"".utf8), metaTag = Data("\"isMeta\":true".utf8)
+        var from = d.startIndex
+        var checked = 0
+        while let r = d.range(of: n, in: from..<d.endIndex) {
+            from = r.upperBound
+            checked += 1
+            if checked > 200 { return false }     // 同一个文件里命中太多次都不算数，多半是编码数据
+            // 英文按整词算：搜 TM 不要命中 html、.tmp 这种单词中间
+            let isLetter: (UInt8) -> Bool = { c in (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
+            if let f = n.first, isLetter(f), r.lowerBound > d.startIndex, isLetter(d[r.lowerBound - 1]) { continue }
+            if let l = n.last, isLetter(l), r.upperBound < d.endIndex, isLetter(d[r.upperBound]) { continue }
+            // 前后各 16 个字节都是编码字符 → 在图片编码里
+            let lo = max(d.startIndex, r.lowerBound - 16), hi = min(d.endIndex, r.upperBound + 16)
+            if d[lo..<r.lowerBound].allSatisfy(b64) && d[r.upperBound..<hi].allSatisfy(b64) && r.lowerBound - lo == 16 { continue }
+            // 找到这一行，看是不是对话行
+            let ls = d[d.startIndex..<r.lowerBound].lastIndex(of: 0x0A).map { $0 + 1 } ?? d.startIndex
+            let le = d[r.upperBound...].firstIndex(of: 0x0A) ?? d.endIndex
+            let head = d[ls..<min(le, ls + 400)]
+            if head.starts(with: Data("{\"type\":\"queue-operation".utf8)) { continue }
+            let line = d[ls..<le]
+            guard line.range(of: userTag) != nil || line.range(of: aiTag) != nil else { from = le; continue }
+            if line.range(of: metaTag) != nil { from = le; continue }
+            return true
+        }
+        return false
+    }
+
     /// 粗查：这段开头里有没有一条完整的「你发的消息」（不解析 JSON，只找标记）
     static func hasUserPrompt(_ d: Data) -> Bool {
         d.range(of: Data("\"type\":\"user\"".utf8)) != nil

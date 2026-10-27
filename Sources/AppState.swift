@@ -74,7 +74,10 @@ final class AppState: ObservableObject {
         }
     }
     @Published var history: [HistoryEntry] = []
-    @Published var search = ""
+    @Published var search = "" { didSet { if search != oldValue { scheduleContentSearch() } } }
+    /// 内容里提到搜索词的对话（标题没对上也能搜到）
+    @Published private(set) var contentMatches: Set<String> = []
+    private var searchGen = 0
     @Published var searchFocusToken = 0
     @Published var statusPanel: StatusTab?      // 状态与统计面板
     @Published var showTrash = false
@@ -138,6 +141,48 @@ final class AppState: ObservableObject {
 
     private var query: String { search.trimmingCharacters(in: .whitespaces).lowercased() }
 
+    /// 标题里有没有搜索词。英文按整词算（搜 TM 不命中 HTML），中文照常
+    static func textHas(_ text: String, _ q: String) -> Bool {
+        guard q.first?.isASCII == true && q.first?.isLetter == true || q.last?.isASCII == true && q.last?.isLetter == true else {
+            return text.lowercased().contains(q)
+        }
+        let pattern = "(?<![A-Za-z])" + NSRegularExpression.escapedPattern(for: q) + "(?![A-Za-z])"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// 标题、对话内容里有搜索词都算
+    private func matches(_ r: SidebarRow, _ q: String) -> Bool {
+        if q.isEmpty || Self.textHas(r.title, q) { return true }
+        if let sid = r.sessionId, contentMatches.contains(sid) { return true }
+        if let live = r.live { return live.items.contains { ($0.kind == .user || $0.kind == .assistant) && Self.textHas($0.text, q) } }
+        return false
+    }
+
+    /// 搜索时这一行是靠内容（不是标题）搜到的
+    func contentOnlyMatch(_ r: SidebarRow) -> Bool {
+        let q = query
+        guard !q.isEmpty, !Self.textHas(r.title, q) else { return false }
+        // 文件夹名对上而整组列出的行不算
+        return matches(r, q)
+    }
+
+    /// 打字停 0.3 秒后在后台翻一遍会话记录，不卡输入
+    private func scheduleContentSearch() {
+        searchGen += 1
+        let gen = searchGen, q = query
+        guard q.count >= 2 else { if !contentMatches.isEmpty { contentMatches = [] }; return }
+        let files = history.flatMap { h in [(h.sessionId, h.url)] + h.mergedFiles.map { (h.sessionId, $0) } }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            var stale = false
+            DispatchQueue.main.sync { stale = gen != self.searchGen }
+            if stale { return }
+            let found = History.search(q, in: files) { gen != self.currentSearchGen() }
+            DispatchQueue.main.async { if gen == self.searchGen { self.contentMatches = found } }
+        }
+    }
+    private func currentSearchGen() -> Int { var g = 0; DispatchQueue.main.sync { g = searchGen }; return g }
+
     func isPinned(_ r: SidebarRow) -> Bool { r.sessionId.map { pinned.contains($0) } ?? false }
 
     func togglePin(_ r: SidebarRow) {
@@ -150,7 +195,7 @@ final class AppState: ObservableObject {
     var pinnedRows: [SidebarRow] {
         let order = Dictionary(pinned.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
         let q = query
-        return allRows.filter { isPinned($0) && (q.isEmpty || $0.title.lowercased().contains(q)) }
+        return allRows.filter { isPinned($0) && matches($0, q) }
             .sorted { (order[$0.sessionId ?? ""] ?? 0) < (order[$1.sessionId ?? ""] ?? 0) }
     }
 
@@ -162,7 +207,7 @@ final class AppState: ObservableObject {
         if !q.isEmpty {
             list = list.compactMap { w in
                 if w.baseName.lowercased().contains(q) { return w }
-                let r = w.rows.filter { $0.title.lowercased().contains(q) }
+                let r = w.rows.filter { matches($0, q) }
                 return r.isEmpty ? nil : Workspace(cwd: w.cwd, rows: r)
             }
         }
