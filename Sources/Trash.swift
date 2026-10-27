@@ -115,15 +115,18 @@ final class TrashStore: ObservableObject {
         try fm.moveItem(at: storedFile(e), to: target)
         let side = storedFolder(e.id)
         if fm.fileExists(atPath: side.path) { try? fm.moveItem(at: side, to: target.deletingPathExtension()) }
+        var allBack = true
         for (i, p) in (e.extraPaths ?? []).enumerated() {
             let src = partsFolder(e).appendingPathComponent("\(i)").appendingPathExtension("jsonl")
             let dst = URL(fileURLWithPath: p)
             if !fm.fileExists(atPath: dst.path) {
                 try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? Self.moveWithSide(src, to: dst)
+                if (try? Self.moveWithSide(src, to: dst)) == nil { allBack = false }
+            } else if fm.fileExists(atPath: src.path) {
+                allBack = false     // 原位置已经有同名文件：这份旧记录留在废纸篓，不直接删掉
             }
         }
-        try? fm.removeItem(at: partsFolder(e))
+        if allBack { try? fm.removeItem(at: partsFolder(e)) }
         entries.removeAll { $0.id == e.id }
         save()
     }

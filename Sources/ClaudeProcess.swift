@@ -50,6 +50,22 @@ enum LoginEnv {
 }
 
 // 一个后台 claude 进程：stream-json 进、stream-json 出
+/// 较新的 claude 才有的参数：旧版本不认识会直接启动失败，记下来以后不再传
+enum OptionalFlags {
+    static func unsupported(_ flag: String) -> Bool {
+        (UserDefaults.standard.stringArray(forKey: "unsupportedCLIFlags") ?? []).contains(flag)
+    }
+    /// 从启动失败的输出里认出「不认识的参数」，记下来；返回记下的参数
+    static func noteUnknown(in output: String) -> String? {
+        for flag in ["--replay-user-messages", "--thinking-display"] where output.contains(flag) && output.lowercased().contains("unknown option") {
+            var list = UserDefaults.standard.stringArray(forKey: "unsupportedCLIFlags") ?? []
+            if !list.contains(flag) { list.append(flag); UserDefaults.standard.set(list, forKey: "unsupportedCLIFlags") }
+            return flag
+        }
+        return nil
+    }
+}
+
 final class ClaudeProcess {
     var onEvent: (([String: Any]) -> Void)?
     var onExit: ((Int32, String) -> Void)?
@@ -67,6 +83,8 @@ final class ClaudeProcess {
     func start(cwd: String, resume: String?, model: String?, permissionMode: String?, addDirs: [String] = [], extraArgs: [String] = []) throws {
         var args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json",
                     "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio"]
+        // 回传确认：你在 Claude 忙时发的消息什么时候被收下，靠它判断还要不要继续转圈
+        if !OptionalFlags.unsupported("--replay-user-messages") { args.append("--replay-user-messages") }
         if let resume { args += ["--resume", resume] }
         if let model, !model.isEmpty { args += ["--model", model] }
         if let permissionMode, !permissionMode.isEmpty { args += ["--permission-mode", permissionMode] }

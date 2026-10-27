@@ -168,7 +168,7 @@ enum Artifacts {
     static let claudeHome = NSString(string: "~/.claude").expandingTildeInPath
 
     /// 从一段工具步骤里挑出产物：去重、只要成功的、排除 Claude 自己的配置和记忆
-    static func collect(_ items: ArraySlice<ChatItem>, since: Date? = nil) -> [Artifact] {
+    static func collect(_ items: ArraySlice<ChatItem>, since: Date? = nil, until: Date? = nil, cwd: String? = nil) -> [Artifact] {
         var out: [Artifact] = []
         var seen = Set<String>()
         for it in items where it.kind == .tool && it.toolState != .failed {
@@ -188,22 +188,23 @@ enum Artifacts {
             }
             if seen.insert(path).inserted { out.append(Artifact(url: URL(fileURLWithPath: path), created: created)) }
         }
-        if let since { appendShellOutputs(items, since: since, into: &out) }
+        if let since { appendShellOutputs(items, since: since, until: until, cwd: cwd, into: &out) }
         return out
     }
 
     /// 用命令行生成的文件（打包 zip、cp、导出等）不走「写文件」工具，单靠 Write/Edit 认不出来。
-    /// 从这一轮的命令和 Claude 的回复里找出提到的路径：在你的个人文件夹里、确实存在、而且是这一轮里新建或改过的，才算产物
-    static func appendShellOutputs(_ items: ArraySlice<ChatItem>, since: Date, into out: inout [Artifact]) {
-        var texts: [String] = []
+    /// 从这一轮的命令和 Claude 的回复里找出提到的路径：在你的个人文件夹里、确实存在、
+    /// 而且是这一轮里（since 到 until 之间）新建或改过的，才算产物
+    static func appendShellOutputs(_ items: ArraySlice<ChatItem>, since: Date, until: Date? = nil, cwd: String? = nil, into out: inout [Artifact]) {
+        var texts: [String] = [], commands: [String] = []
         for it in items {
-            if it.kind == .tool, it.toolName == "Bash", it.toolState != .failed, let c = it.toolInput["command"] as? String { texts.append(c) }
+            if it.kind == .tool, it.toolName == "Bash", it.toolState != .failed, let c = it.toolInput["command"] as? String { texts.append(c); commands.append(c) }
             if it.kind == .assistant { texts.append(it.text) }
         }
         let home = NSHomeDirectory(), fm = FileManager.default
         var found: [String] = []
-        let patterns = [#""((?:~|/Users)/[^"\n]+)""#, #"'((?:~|/Users)/[^'\n]+)'"#, #"`((?:~|/Users)/[^`\n]+)`"#,
-                        #"((?:~|/Users)/[^\s"'`，。、；：！？）)」』\]]+)"#]
+        let patterns = [#""((?:~|\$HOME|/Users)/[^"\n]+)""#, #"'((?:~|\$HOME|/Users)/[^'\n]+)'"#, #"`((?:~|\$HOME|/Users)/[^`\n]+)`"#,
+                        #"((?:~|\$HOME|/Users)/(?:\\ |[^\s"'`，。、；：！？）)」』\]])+)"#]
         for t in texts {
             for p in patterns {
                 guard let re = try? NSRegularExpression(pattern: p) else { continue }
@@ -212,9 +213,35 @@ enum Artifacts {
                 }
             }
         }
-        var added = 0
-        for raw in found {
+        // 命令里的相对路径（cd 到某个文件夹后 zip out.zip …）：只认常见产物后缀，按工作文件夹补全
+        if let cwd {
+            let exts = Set(["zip", "html", "htm", "pdf", "png", "jpg", "jpeg", "svg", "gif", "xlsx", "xls", "csv", "docx", "pptx", "md", "txt", "json", "swift", "kt", "js", "ts", "py", "mp4", "mov", "dmg"])
+            let tokenRe = try? NSRegularExpression(pattern: #""([^"]+)"|'([^']+)'|(\S+)"#)
+            for c in commands {
+                var base = cwd
+                if let m = c.range(of: #"^\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*&&"#, options: .regularExpression) {
+                    var d = String(c[m]).replacingOccurrences(of: #"^\s*cd\s+"#, with: "", options: .regularExpression)
+                    d = d.replacingOccurrences(of: "&&", with: "").trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                    d = (d as NSString).expandingTildeInPath
+                    base = d.hasPrefix("/") ? d : (cwd as NSString).appendingPathComponent(d)
+                }
+                for m in tokenRe?.matches(in: c, range: NSRange(c.startIndex..., in: c)) ?? [] {
+                    let tok = (1...3).compactMap { Range(m.range(at: $0), in: c).map { String(c[$0]) } }.first ?? ""
+                    guard !tok.hasPrefix("/"), !tok.hasPrefix("~"), !tok.hasPrefix("-"), !tok.contains("*"), !tok.contains("$"),
+                          exts.contains((tok as NSString).pathExtension.lowercased()) else { continue }
+                    found.append((base as NSString).appendingPathComponent(tok))
+                }
+            }
+        }
+        let trailing = CharacterSet(charactersIn: ".,:;*)]>'\"，。、；：！？）」』")
+        var tried = Set<String>(), added = 0
+        for raw0 in found {
+            // 句末标点、Markdown 加粗记号会被一起抓进来：去掉再试
+            var raw = raw0.replacingOccurrences(of: "$HOME", with: "~").replacingOccurrences(of: "\\ ", with: " ")
+            while let last = raw.unicodeScalars.last, trailing.contains(last) { raw.removeLast() }
             let path = ((raw as NSString).expandingTildeInPath as NSString).standardizingPath
+            guard tried.insert(path).inserted else { continue }
+            if tried.count > 60 { break }      // 一轮里提到的路径太多就不逐个查了
             guard path.hasPrefix(home + "/"), !path.hasPrefix(claudeHome + "/"), !path.hasPrefix(home + "/Library/"),
                   !path.split(separator: "/").contains(where: { $0.hasPrefix(".") }),
                   !out.contains(where: { $0.url.path == path }) else { continue }
@@ -222,6 +249,8 @@ enum Artifacts {
             guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue,
                   let attrs = try? fm.attributesOfItem(atPath: path),
                   let mod = attrs[.modificationDate] as? Date, mod >= since.addingTimeInterval(-2) else { continue }
+            // 重新打开旧对话时：之后几轮才改过的文件不算这一轮的
+            if let until, mod > until.addingTimeInterval(5) { continue }
             let created = ((attrs[.creationDate] as? Date) ?? .distantPast) >= since.addingTimeInterval(-2)
             out.append(Artifact(url: URL(fileURLWithPath: path), created: created))
             added += 1

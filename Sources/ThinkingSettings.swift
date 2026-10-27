@@ -18,6 +18,7 @@ enum ThinkingPrefs {
     /// 传给后台 claude 的 --thinking-display。
     /// 后台模式（-p）不读 showThinkingSummaries，不传就拿不到思考内容，这是和终端显示不一样的原因
     static func cliDisplay(cwd: String) -> String? {
+        if OptionalFlags.unsupported("--thinking-display") { return nil }
         switch display {
         case "summarized", "omitted": return display
         default:

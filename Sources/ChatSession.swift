@@ -39,6 +39,8 @@ final class ChatSession: ObservableObject, Identifiable {
     /// 每发一条消息记下这一轮从 items 哪里开始；Claude 忙时也能继续发（排队），按先后对应各自的结果
     private var turnStarts: [Int] = []
     /// 还没收到结果的消息数：忙时又发了消息，第一条的结果回来时还不能算「空闲」
+    /// 发出去、还没被 Claude 回传确认（replay）的消息条数。
+    /// Claude 忙时你发的消息有时并进当前这轮，有时单独排成下一轮；回传确认能准确区分，不靠猜
     private var pendingTurns = 0
     /// 消息按顺序编码后再发（带图的消息在后台编码，不卡界面，也不会被后发的文字插队）
     private let sendQueue = DispatchQueue(label: "chat.send")
@@ -51,6 +53,7 @@ final class ChatSession: ObservableObject, Identifiable {
     private var flushScheduled = false
     private(set) var lastEventAt = Date()
     private var resultGen = 0
+    private var lastInitAt = Date.distantPast
     private var interrupted = false        // 本轮是你手动停的，不发完成通知
     private var watchdog: Timer?
     /// 多久没消息算卡住（秒）；DUIHUATAI_STALL_SECONDS 仅用于测试
@@ -106,6 +109,14 @@ final class ChatSession: ObservableObject, Identifiable {
         finishStreaming()
         cancelPending()
         for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
+        // 本机 claude 版本较旧、不认识某个新参数：记下来以后不再传，并把刚才那条消息重新发一次
+        if code != 0, let flag = OptionalFlags.noteUnknown(in: output),
+           let last = items.last(where: { $0.kind == .user }) {
+            items.removeAll { $0 === last }
+            items.append(ChatItem(.notice, "本机的 Claude 版本较旧，不支持 \(flag)，已自动关掉这个功能并重新发送。"))
+            send(text: last.text, images: last.images, files: last.files)
+            return
+        }
         if wasBusy || code != 0 {
             let tail = output.split(separator: "\n").suffix(8).joined(separator: "\n")
             items.append(ChatItem(.error, "后台进程退出了（代码 \(code)）。再发一条消息会自动接着这个对话重新启动。" + (tail.isEmpty ? "" : "\n\n" + tail)))
@@ -215,7 +226,9 @@ final class ChatSession: ObservableObject, Identifiable {
             }
             DispatchQueue.main.async { self?.proc?.send(["type": "user", "message": ["role": "user", "content": content]]) }
         }
-        pendingTurns += 1
+        // 斜杠命令（/compact 等）不会回传确认，只按「完成」判断
+        if !text.hasPrefix("/") && !OptionalFlags.unsupported("--replay-user-messages") { pendingTurns += 1 }
+        if !busy { interrupted = false }
         busy = true
         setStatus("等待回复")
         lastActive = Date()
@@ -403,9 +416,11 @@ final class ChatSession: ObservableObject, Identifiable {
     private func handle(_ e: [String: Any]) {
         let type = e["type"] as? String ?? ""
         let parent = e["parent_tool_use_id"] as? String
-        // 一轮结束后 Claude 又开始输出：说明你在它忙时发的消息被单独排成了下一轮，重新算「忙」
-        if !busy, type == "stream_event" || type == "assistant" {
+        // 兜底：已经算空闲了，Claude 主线程又开始一条新回复（不是子代理的），重新算「忙」
+        if !busy, parent == nil, type == "stream_event",
+           ((e["event"] as? [String: Any])?["type"] as? String) == "message_start" {
             busy = true
+            interrupted = false
             turnStarts.append(items.count)
             setStatus("回复中")
             startWatchdog()
@@ -426,6 +441,8 @@ final class ChatSession: ObservableObject, Identifiable {
             for b in blocks { assistantBlock(b) }
         case "user":
             guard parent == nil, let msg = e["message"] as? [String: Any] else { return }
+            // 你发的消息被 Claude 收下了（回传确认），不用再显示一遍
+            if e["isReplay"] as? Bool == true { pendingTurns = max(0, pendingTurns - 1); return }
             if let s = msg["content"] as? String {
                 if !s.isEmpty { items.append(ChatItem(.notice, s)) }
                 return
@@ -442,7 +459,7 @@ final class ChatSession: ObservableObject, Identifiable {
             let start = turnStarts.first ?? items.count
             turnStarts.removeAll()
             if start <= items.count {
-                let arts = Artifacts.collect(items[start...], since: items.indices.contains(start - 1) ? items[start - 1].startedAt : Date().addingTimeInterval(-3600))
+                let arts = Artifacts.collect(items[start...], since: items.indices.contains(start - 1) ? items[start - 1].startedAt : Date().addingTimeInterval(-3600), cwd: cwd)
                 if !arts.isEmpty {
                     let it = ChatItem(.artifacts)
                     it.artifacts = arts
@@ -451,9 +468,10 @@ final class ChatSession: ObservableObject, Identifiable {
             }
             // 以 Claude 的「本轮结束」为准：你在它忙时发的消息常被并进同一轮回答，只会回来一次结束信号，
             // 按发送条数计数会一直转圈。如果确实还有单独排队的一轮，它开始输出时会重新进入「忙」
-            pendingTurns = 0
-            busy = false
-            setStatus("")
+            // 手动停止：排队的也一起作废；否则还有没被收下的消息，就继续算「忙」等下一轮
+            if interrupted { pendingTurns = 0 }
+            busy = pendingTurns > 0
+            setStatus(busy ? "接着处理你补充的消息" : "")
             lastActive = Date()
             if let c = e["total_cost_usd"] as? Double {
                 UsageStore.shared.addCost(c - costUSD)
@@ -464,15 +482,26 @@ final class ChatSession: ObservableObject, Identifiable {
                 items.append(ChatItem(.error, r))
             }
             for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
-            if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest); NSSound(named: "Glass")?.play() }
-            // 完成通知稍等一下再发：排队的下一轮马上开始的话就不算完成
+            // 完成提醒稍等一下：排队的下一轮马上开始的话就不算完成
             let ok = (e["is_error"] as? Bool) != true && !interrupted
             resultGen += 1
             let gen = resultGen
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 guard let self, gen == self.resultGen, !self.busy else { return }
+                if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest); NSSound(named: "Glass")?.play() }
                 if ok { Notifier.shared.taskDone(self) }
                 self.interrupted = false     // 手动停止只对这一批消息有效
+            }
+            // 保险：还有没收下的消息时，Claude 会马上开始下一轮（先发一个 init）。
+            // 20 秒都没开始，说明那条消息不会再处理了，别一直转圈（等回复本身可能很久，所以只看「开没开始」）
+            if busy {
+                let endedAt = Date()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                    guard let self, gen == self.resultGen, self.busy, self.lastInitAt < endedAt else { return }
+                    self.pendingTurns = 0
+                    self.busy = false
+                    self.setStatus("")
+                }
             }
         case "rate_limit_event":
             if let info = e["rate_limit_info"] as? [String: Any] { UsageStore.shared.update(info) }
@@ -494,6 +523,7 @@ final class ChatSession: ObservableObject, Identifiable {
     private func handleSystem(_ e: [String: Any]) {
         switch e["subtype"] as? String {
         case "init":
+            lastInitAt = Date()
             if let s = e["session_id"] as? String { sessionId = s }
             if let m = e["model"] as? String { activeModel = m }
             if let pm = e["permissionMode"] as? String, let m = PermissionMode(rawValue: pm) { mode = m }

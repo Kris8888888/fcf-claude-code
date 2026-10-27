@@ -116,8 +116,16 @@ enum History {
     }
 
     /// 粗查：这段开头里有没有一条完整的「你发的消息」（不解析 JSON，只找标记）
+    /// 这段开头里有没有一条真正的「你发的消息」（不算系统附加的、命令输出、工具结果）
     static func hasUserPrompt(_ d: Data) -> Bool {
-        d.range(of: Data("\"type\":\"user\"".utf8)) != nil
+        let tag = Data("\"type\":\"user\"".utf8)
+        for line in d.split(separator: 0x0A) where line.range(of: tag) != nil {
+            guard let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  o["type"] as? String == "user", o["isMeta"] as? Bool != true, o["isSidechain"] as? Bool != true,
+                  let m = o["message"] as? [String: Any], let t = promptText(m["content"]) else { continue }
+            if !stripBashContext(t).hasPrefix("<") { return true }
+        }
+        return false
     }
 
     static func entry(url: URL, modified: Date) -> HistoryEntry? {
@@ -229,9 +237,10 @@ enum History {
         var turnTime: Date?             // 这一轮你发消息的时间，用来判断命令生成的文件是不是这一轮做的
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         // 一轮结束（下一条你的消息之前 / 文件末尾）把这一轮的产物补成卡片
-        func flushArtifacts() {
+        var lastCwd: String?
+        func flushArtifacts(until: Date?) {
             guard turnStart <= items.count else { return }
-            let arts = Artifacts.collect(items[turnStart...], since: turnTime)
+            let arts = Artifacts.collect(items[turnStart...], since: turnTime, until: until, cwd: lastCwd)
             if !arts.isEmpty {
                 let it = ChatItem(.artifacts)
                 it.artifacts = arts
@@ -245,6 +254,7 @@ enum History {
             // 逐行释放解析时的临时内存，长对话打开时内存不会一下涨很多
             guard let o = autoreleasepool(invoking: { try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] }) else { continue }
             let type = o["type"] as? String
+            if let c = o["cwd"] as? String { lastCwd = c }
             if type == "ai-title" { title = o["aiTitle"] as? String; continue }
             guard type == "user" || type == "assistant", o["isSidechain"] as? Bool != true,
                   let m = o["message"] as? [String: Any] else { continue }
@@ -279,7 +289,8 @@ enum History {
                     continue
                 }
                 if s.hasPrefix("<") { continue }
-                flushArtifacts()
+                // 上一轮的产物：只算上一轮到这条消息之前改过的文件
+                flushArtifacts(until: (o["timestamp"] as? String).flatMap { iso.date(from: $0) })
                 let d = FileKind.decode(s)
                 // 终端里贴图会在文字里留「[Image #1]」占位，图片已经单独显示了，去掉占位
                 let text = imgs.isEmpty ? d.text : d.text.replacingOccurrences(of: #"\[Image #\d+\]\s*"#, with: "", options: .regularExpression)
@@ -308,7 +319,7 @@ enum History {
                 }
             }
         }
-        flushArtifacts()
+        flushArtifacts(until: nil)
         if items.count > 400 {
             items = Array(items.suffix(400))
             items.insert(ChatItem(.notice, "更早的内容没有显示，对话本身是完整的。"), at: 0)
