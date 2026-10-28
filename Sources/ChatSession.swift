@@ -117,10 +117,32 @@ final class ChatSession: ObservableObject, Identifiable {
             send(text: last.text, images: last.images, files: last.files)
             return
         }
+        if LoginController.isAuthError(output) { showLoginCard(); return }
         if wasBusy || code != 0 {
             let tail = output.split(separator: "\n").suffix(8).joined(separator: "\n")
             items.append(ChatItem(.error, "后台进程退出了（代码 \(code)）。再发一条消息会自动接着这个对话重新启动。" + (tail.isEmpty ? "" : "\n\n" + tail)))
         }
+    }
+
+    /// 登录过期：放一张「重新登录」卡片（同一时间只留一张），记下要在登录后重发
+    private(set) var needsResendAfterLogin = false
+    private func showLoginCard() {
+        needsResendAfterLogin = true
+        items.removeAll { $0.kind == .login }
+        items.append(ChatItem(.login))
+    }
+
+    /// 重新登录成功后：重启后台进程换上新登录；刚才因为登录过期没成功的那条消息自动再发一次
+    func resumeAfterLogin() {
+        let resend = needsResendAfterLogin
+        needsResendAfterLogin = false
+        items.removeAll { $0.kind == .login }
+        guard !busy else { return }
+        restart()
+        guard resend, let last = items.last(where: { $0.kind == .user }) else { return }
+        items.removeAll { $0 === last }
+        items.append(ChatItem(.notice, "已重新登录，正在重新发送刚才的消息。"))
+        send(text: last.text, images: last.images, files: last.files)
     }
 
     /// 让配置改动生效：结束空闲中的后台进程，下一条消息会带着 --resume 重新启动
@@ -479,7 +501,12 @@ final class ChatSession: ObservableObject, Identifiable {
             }
             if (e["is_error"] as? Bool) == true {
                 let r = (e["result"] as? String) ?? (e["subtype"] as? String ?? "出错了")
-                items.append(ChatItem(.error, r))
+                if LoginController.isAuthError(r) { showLoginCard() } else { items.append(ChatItem(.error, r)) }
+            }
+            // 登录过期时 Claude 会把「Please run /login」当成一条回复发回来：换成登录卡片
+            if start <= items.count, items[start...].contains(where: { $0.kind == .assistant && LoginController.isAuthNotice($0.text) }) {
+                items.removeAll { $0.kind == .assistant && LoginController.isAuthNotice($0.text) }
+                showLoginCard()
             }
             for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
             // 完成提醒稍等一下：排队的下一轮马上开始的话就不算完成

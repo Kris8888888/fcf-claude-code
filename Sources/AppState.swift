@@ -81,6 +81,7 @@ final class AppState: ObservableObject {
     @Published var searchFocusToken = 0
     @Published var statusPanel: StatusTab?      // 状态与统计面板
     @Published var showTrash = false
+    @Published var showLogin = false            // 重新登录窗口
     /// 置顶的会话 ID，先置顶的在前
     @Published var pinned: [String] = UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? []
     @Published var customTitles: [String: String] = UserDefaults.standard.dictionary(forKey: "customTitles") as? [String: String] ?? [:]
@@ -96,6 +97,10 @@ final class AppState: ObservableObject {
     init() {
         refreshHistory()
         newSession()
+        // 登录成功：各对话换上新登录；因为登录过期没发出去的那条消息自动重发
+        LoginController.shared.onSuccess = { [weak self] in
+            self?.sessions.forEach { $0.resumeAfterLogin() }
+        }
     }
 
     private var historyGen = 0

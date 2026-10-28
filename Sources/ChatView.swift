@@ -445,6 +445,7 @@ struct ItemRow: View {
         case .thinking: ThinkingRow(item: item)
         case .artifacts: Rail { ArtifactsBlock(item: item, session: session) }
         case .local: Rail(node: T.accent) { LocalCard(item: item) }
+        case .login: Rail(node: T.err) { LoginCard() }
         case .tool: ToolRow(item: item)
         case .question: Rail(node: T.accent) { QuestionCard(item: item, session: session) }
         case .permission: Rail(node: T.accent) { PermissionCard(item: item, session: session) }

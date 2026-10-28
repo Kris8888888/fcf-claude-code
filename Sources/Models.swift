@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-enum ItemKind { case user, assistant, thinking, tool, question, permission, notice, error, artifacts, local }
+enum ItemKind { case user, assistant, thinking, tool, question, permission, notice, error, artifacts, local, login }
 enum ToolState { case running, done, failed, stopped }
 
 final class ChatItem: ObservableObject, Identifiable {

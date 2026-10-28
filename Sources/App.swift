@@ -84,6 +84,7 @@ struct RootView: View {
         }
         .tint(T.accent)
         .sheet(item: $app.statusPanel) { tab in StatusPanel(tab: tab).environmentObject(app) }
+        .sheet(isPresented: $app.showLogin) { Themed { LoginSheet() } }
         .onAppear {
             // 仅用于截图验证：DUIHUATAI_STATUS_DEMO=status|usage|stats
             if let t = ProcessInfo.processInfo.environment["DUIHUATAI_STATUS_DEMO"], let tab = StatusTab(rawValue: t) {

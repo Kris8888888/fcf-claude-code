@@ -40,8 +40,9 @@ enum LocalCommands {
         let args = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
 
         if let page = settingsPages[name] { openSettings(page); return true }
+        if name == "login" { app.showLogin = true; return true }
         if terminalOnly.contains(name) {
-            let extra = name == "login" || name == "logout" ? "账号由 FCF 管理：菜单栏「文件 → 重新进行启动检查（FCF）」里运行 fcf 处理。" : "这个命令只在终端版里有用，窗口版不需要。"
+            let extra = name == "logout" ? "退出登录请在终端里运行 claude auth logout；重新登录直接输入 /login。" : "这个命令只在终端版里有用，窗口版不需要。"
             session.addLocal("/\(name)", extra)
             return true
         }
