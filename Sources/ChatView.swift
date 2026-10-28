@@ -103,8 +103,20 @@ struct Transcript: View {
     @State private var atBottom = true
     @State private var viewport: CGFloat = 0
     @State private var openGroups: Set<UUID> = []
-    /// 进对话时只先画最近这些段：几百条一起排，跳到底部时会先空白一阵
-    @State private var shown = 60
+    /// 进对话时只先画最近 60 段（几百条一起排，跳到底部会先空白一阵）。
+    /// 起点定下后就固定在某一条上：新内容只往下加，不能从顶上抽走旧的——
+    /// 顶上一抽，内容变矮，滚动位置落到内容外面，画面就成了一片空白
+    @State private var startItem: UUID?
+    /// 最近一次有新内容的时间（引用类型，改它不触发重绘）
+    final class Clock { var lastGrowth = Date.distantPast; var sig = 0; var userScroll = Date.distantPast }
+    @State private var clock = Clock()
+
+    init(session: ChatSession) {
+        self.session = session
+        // 创建时就定好起点，进对话后不再改：在出现那一刻改会多排一次版，打乱「是否在底部」的判断
+        let all = Self.makeRows(session.items, busy: session.busy)
+        _startItem = State(initialValue: all.count > 60 ? Self.firstItem(all[all.count - 60]).id : nil)
+    }
 
     /// 连续 4 步以上的工具/思考折叠成一组，长任务不刷屏
     enum Row: Identifiable {
@@ -120,7 +132,9 @@ struct Transcript: View {
         }
     }
 
-    var rows: [Row] {
+    var rows: [Row] { Self.makeRows(session.items, busy: session.busy) }
+
+    static func makeRows(_ items: [ChatItem], busy: Bool) -> [Row] {
         var out: [Row] = []
         var run: [ChatItem] = []
         func flush() {
@@ -132,15 +146,34 @@ struct Transcript: View {
             if !replies.isEmpty { out.append(.copy(replies)) }
             replies = []
         }
-        for it in session.items {
+        for it in items {
             if it.kind == .user { flush(); endTurn() }
             if it.kind == .assistant && !it.text.isEmpty { replies.append(it) }
             if it.kind == .tool || it.kind == .thinking { run.append(it) } else { flush(); out.append(.single(it)) }
         }
         flush()
         // 最后一轮还在回复时先不放复制按钮，答完再出现
-        if !session.busy { endTurn() }
+        if !busy { endTurn() }
         return out
+    }
+
+    static func firstItem(_ r: Row) -> ChatItem {
+        switch r { case .single(let i): return i; case .group(let g): return g[0]; case .copy(let c): return c[0] }
+    }
+
+    /// 从第几段开始画：没定过就取最后 60 段，定过就从那一条开始（之后新增的都画）
+    private func firstShown(_ all: [Row]) -> Int {
+        guard let startItem else { return max(0, all.count - 60) }
+        guard let idx = session.items.firstIndex(where: { $0.id == startItem }) else { return 0 }
+        let pos = Dictionary(session.items.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return all.firstIndex { (pos[Self.firstItem($0).id] ?? 0) >= idx } ?? 0
+    }
+
+    /// 跟到最底部：新内容刚加进来时还没排版，立刻跳只能跳到旧的底部；等排完再跳一次才是真的底部
+    private func follow(_ proxy: ScrollViewProxy) {
+        clock.lastGrowth = Date()
+        proxy.scrollTo("bottom", anchor: .bottom)
+        DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     var body: some View {
@@ -149,14 +182,15 @@ struct Transcript: View {
                 VStack(spacing: 0) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     let all = rows
-                    if all.count > shown {
+                    let from = firstShown(all)
+                    if from > 0 {
                         Button {
-                            // 展开后停在原来看的位置，不跳走
-                            let keep = all[all.count - shown].id
-                            shown += 80
+                            // 往前多放 80 段，并停在原来看的位置，不跳走
+                            let keep = all[from].id
+                            startItem = Self.firstItem(all[max(0, from - 80)]).id
                             DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) }
                         } label: {
-                            Text("显示更早的内容（还有 \(all.count - shown) 段）")
+                            Text("显示更早的内容（还有 \(from) 段）")
                                 .font(.system(size: fs(12))).foregroundStyle(T.muted)
                                 .padding(.horizontal, 12).padding(.vertical, 6)
                                 .background(Capsule().fill(T.line.opacity(0.5)))
@@ -165,7 +199,7 @@ struct Transcript: View {
                         .frame(maxWidth: .infinity)
                         .padding(.bottom, 16)
                     }
-                    ForEach(all.suffix(shown)) { row in
+                    ForEach(all[from...]) { row in
                         switch row {
                         case .single(let item):
                             ItemRow(item: item, session: session).id(row.id)
@@ -198,8 +232,17 @@ struct Transcript: View {
             // 离底部 150pt 以内都算「在底部」，流式输出变长也不会误判成你在往上翻
             .onPreferenceChange(BottomOffsetKey.self) { y in
                 let v = y - viewport < 150
+                // 内容变了（新消息、回复在输出）把底部推远，这不是你往上翻：继续跟到底部，别停
+                let sig = session.items.count &* 1_000_003 &+ (session.items.last?.text.utf16.count ?? 0)
+                let grew = sig != clock.sig
+                clock.sig = sig
+                // 但你正在用触控板/鼠标滚动（比如往上翻看）时不拽你回去
+                let scrolling = Date().timeIntervalSince(clock.userScroll) < 0.5
+                if !v, atBottom, !scrolling, grew || Date().timeIntervalSince(clock.lastGrowth) < 0.6 { follow(proxy); return }
                 if v != atBottom { atBottom = v }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSScrollView.willStartLiveScrollNotification)) { _ in clock.userScroll = Date() }
+            .onReceive(NotificationCenter.default.publisher(for: NSScrollView.didLiveScrollNotification)) { _ in clock.userScroll = Date() }
             .overlay(alignment: .bottom) {
                 if !atBottom {
                     Button { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } } label: {
@@ -213,13 +256,15 @@ struct Transcript: View {
                     .transition(.opacity)
                 }
             }
-            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onAppear {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
             // 只有停在底部时才跟随新内容；你往上翻看时不会被拽下去。自己发消息总会回到底部
             .onChange(of: session.items.count) {
-                if atBottom || session.items.last?.kind == .user { proxy.scrollTo("bottom", anchor: .bottom) }
+                if atBottom || session.items.last?.kind == .user { follow(proxy) } 
             }
-            .onReceive(session.streamTicks) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
-            .onChange(of: session.busy) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
+            .onReceive(session.streamTicks) { if atBottom { follow(proxy) } }
+            .onChange(of: session.busy) { if atBottom { follow(proxy) } }
         }
     }
 }
