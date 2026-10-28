@@ -13,7 +13,7 @@ final class PtyProcess {
 
     var isRunning: Bool { proc?.isRunning ?? false }
 
-    func start(command: String, cwd: String, cols: Int, rows: Int) throws {
+    func start(command: String, cwd: String, cols: Int, rows: Int, extraEnv: [String: String] = [:]) throws {
         let m = posix_openpt(O_RDWR | O_NOCTTY)
         guard m >= 0, grantpt(m) == 0, unlockpt(m) == 0, let name = ptsname(m) else {
             throw NSError(domain: "pty", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法创建终端"])
@@ -28,6 +28,7 @@ final class PtyProcess {
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "zh_CN.UTF-8"
+        for (k, v) in extraEnv { env[k] = v }
 
         // 用 script 再套一层：命令拿到自己的控制终端，Ctrl+C 能直接中断、/dev/tty 可用
         let p = Process()

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// 重新登录 Claude：在内置终端里跑 `claude auth login`，和终端里 /login 是同一套流程
-/// （自动打开浏览器授权，网页给验证码时粘贴回来）
+/// （验证码登录：不自动弹浏览器，你打开登录页拿到验证码再粘贴回来）
 final class LoginController: ObservableObject {
     static let shared = LoginController()
 
@@ -34,7 +34,9 @@ final class LoginController: ObservableObject {
         }
         let q = "'" + LoginEnv.claudePath.replacingOccurrences(of: "'", with: "'\\''") + "'"
         do {
-            try p.start(command: q + " auth login", cwd: NSHomeDirectory(), cols: 1000, rows: 30)
+            // 不让它自动弹浏览器：Claude 打开网页前会先看 BROWSER，指向一个什么都不做的命令。
+            // 这样走的就是终端里的「验证码登录」：你自己打开登录页，网页给验证码，粘贴回来
+            try p.start(command: q + " auth login", cwd: NSHomeDirectory(), cols: 1000, rows: 30, extraEnv: ["BROWSER": "/usr/bin/true"])
             pty = p
             state = .running
         } catch {
@@ -73,7 +75,7 @@ final class LoginController: ObservableObject {
                     self.state = .success(who)
                     self.onSuccess?()
                 } else {
-                    self.state = .failed("还没有登录成功。可以再试一次；如果浏览器没打开，用「在浏览器打开登录页」。")
+                    self.state = .failed("还没有登录成功。点「再试一次」，打开登录页拿到新的验证码再粘贴。")
                 }
             }
         }
@@ -132,9 +134,9 @@ struct LoginSheet: View {
 
             // 这三步确实有先后顺序，所以用编号
             VStack(alignment: .leading, spacing: 8) {
-                step(1, "点「开始登录」，会自动打开浏览器；没打开就点「在浏览器打开登录页」。")
-                step(2, "在网页上确认授权。")
-                step(3, "网页如果给了一串验证码，复制后点「粘贴验证码」。")
+                step(1, "点「开始登录」，等下面出现登录链接后，点「打开登录页」。")
+                step(2, "在网页上登录并确认授权，页面会显示一串验证码。")
+                step(3, "复制这串验证码，回到这里点「粘贴验证码」。")
             }
             .padding(.horizontal, 22).padding(.bottom, 14)
 
@@ -180,12 +182,16 @@ struct LoginSheet: View {
                 Text("正在确认登录状态…").font(T.small).foregroundStyle(T.muted)
                 Spacer()
             case .running:
-                if let u = login.loginURL {
-                    Button("在浏览器打开登录页") { NSWorkspace.shared.open(u) }.buttonStyle(.plain).foregroundStyle(T.accent)
+                if login.loginURL == nil {
+                    ProgressView().controlSize(.small)
+                    Text("正在生成登录链接…").font(T.small).foregroundStyle(T.muted)
                 }
                 Spacer()
                 Button("取消") { login.cancel() }.buttonStyle(.plain).foregroundStyle(T.muted)
-                Button("粘贴验证码") { login.pasteCode() }.buttonStyle(PrimaryButton())
+                if let u = login.loginURL {
+                    Button("打开登录页") { NSWorkspace.shared.open(u) }.buttonStyle(.bordered)
+                    Button("粘贴验证码") { login.pasteCode() }.buttonStyle(PrimaryButton())
+                }
             case .idle:
                 Spacer()
                 Button("关闭") { dismiss() }.buttonStyle(.plain).foregroundStyle(T.muted)
