@@ -53,6 +53,8 @@ final class ChatSession: ObservableObject, Identifiable {
     private var flushScheduled = false
     private(set) var lastEventAt = Date()
     private var resultGen = 0
+    /// 微信远程对话：需要你确认、一轮做完时通知它，转发到微信
+    weak var remote: RemoteSink?
     private var lastInitAt = Date.distantPast
     private var interrupted = false        // 本轮是你手动停的，不发完成通知
     private var watchdog: Timer?
@@ -509,6 +511,14 @@ final class ChatSession: ObservableObject, Identifiable {
                 showLoginCard()
             }
             for it in toolItems.values where it.toolState == .running { it.toolState = .stopped }
+            if let remote {
+                let replies = start <= items.count ? items[start...].filter { $0.kind == .assistant }.map(\.text) : []
+                let arts = start <= items.count ? (items[start...].last(where: { $0.kind == .artifacts })?.artifacts.map(\.url) ?? []) : []
+                let err: String? = (e["is_error"] as? Bool) == true
+                    ? (LoginController.isAuthError((e["result"] as? String) ?? "") ? "电脑上的 Claude 登录已过期，需要在电脑上重新登录。" : ((e["result"] as? String) ?? "出错了"))
+                    : (interrupted ? "已停止。" : nil)
+                remote.remoteTurnFinished(self, replies: replies, artifacts: arts, error: err)
+            }
             // 完成提醒稍等一下：排队的下一轮马上开始的话就不算完成
             let ok = (e["is_error"] as? Bool) != true && !interrupted
             resultGen += 1
@@ -680,6 +690,7 @@ final class ChatSession: ObservableObject, Identifiable {
         it.toolInput = input
         items.append(it)
         needsAttention = true
+        remote?.remoteNeedsInput(self, item: it)
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest); NSSound(named: "Ping")?.play() }
     }
 

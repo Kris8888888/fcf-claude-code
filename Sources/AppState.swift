@@ -101,6 +101,9 @@ final class AppState: ObservableObject {
         LoginController.shared.onSuccess = { [weak self] in
             self?.sessions.forEach { $0.resumeAfterLogin() }
         }
+        // 微信 ClawBot：绑定过就自动开始收消息
+        WeixinBridge.shared.app = self
+        WeixinBridge.shared.startIfBound()
     }
 
     private var historyGen = 0
@@ -236,9 +239,12 @@ final class AppState: ObservableObject {
         return s
     }
 
-    private func add(_ s: ChatSession) {
+    /// 后台开的对话（比如微信远程）：放进列表，但不抢你正在看的对话
+    func addBackground(_ s: ChatSession) { add(s, select: false) }
+
+    private func add(_ s: ChatSession, select: Bool = true) {
         sessions.insert(s, at: 0)
-        selected = s.id
+        if select || selected == nil { selected = s.id }
         // 只在侧栏关心的字段变化时刷新（打字、流式输出不触发），并合并 0.15 秒内的连续变化
         let signals: [AnyPublisher<Void, Never>] = [
             s.$title.map { _ in () }.eraseToAnyPublisher(),
