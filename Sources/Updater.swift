@@ -33,6 +33,9 @@ final class Updater: ObservableObject {
 
     /// 最近一次读到的新版本（失败引导里用它的下载页）
     @Published var lastRelease: Release?
+    /// 上次检查的时间和结果（设置页显示「已是最新」用）
+    @Published var lastChecked: Date?
+    @Published var latestKnown: String?
     static var releasesPage: String { "https://github.com/\(repo)/releases/latest" }
 
     enum State: Equatable {
@@ -69,6 +72,8 @@ final class Updater: ObservableObject {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let r):
+                    self.lastChecked = Date()
+                    self.latestKnown = r.version
                     if Self.newer(r.version, than: self.current) {
                         self.lastRelease = r
                         // 自动检查时，用户点过「这个版本先不更新」就不再打扰；手动检查总是显示
@@ -88,22 +93,69 @@ final class Updater: ObservableObject {
 
     struct UpdateError: LocalizedError { let msg: String; var errorDescription: String? { msg } }
 
-    /// 私有仓库用本机已登录的 gh 读；没有 gh 时按公开仓库匿名读
+    // MARK: 走 FCF 代理
+
+    /// FCF 给 Claude 用的代理（公司网络直连 GitHub 常常连不上，走它稳定）。
+    /// 依次找：正在运行的 Claude 进程实际用的 → 上次记下的 → FCF 安装包里的默认值
+    static func fcfProxy() -> String? {
+        let r = Shell.run("/usr/bin/pgrep", ["-f", "bin/claude"], timeout: 5)
+        for pidStr in r.output.split(separator: "\n").prefix(6) {
+            if let pid = Int32(pidStr.trimmingCharacters(in: .whitespaces)), let v = StatusProbe.proxy(under: pid) {
+                UserDefaults.standard.set(v, forKey: "fcfProxy")
+                return v
+            }
+        }
+        if let v = UserDefaults.standard.string(forKey: "fcfProxy"), !v.isEmpty { return v }
+        if let v = fcfDefaultProxy() { return v }
+        return nil
+    }
+
+    /// FCF 安装包里写的默认代理地址
+    static func fcfDefaultProxy() -> String? {
+        let fm = FileManager.default
+        for dir in (LoginEnv.shared["PATH"] ?? "").split(separator: ":") where dir.hasSuffix("/bin") {
+            let dist = (String(dir) as NSString).deletingLastPathComponent + "/lib/node_modules/@rdc/fcf/dist"
+            guard let e = fm.enumerator(atPath: dist) else { continue }
+            for case let f as String in e where f.hasSuffix(".mjs") && f.contains("vars") {
+                guard let t = try? String(contentsOfFile: dist + "/" + f, encoding: .utf8),
+                      let r = t.range(of: #"HTTPS_PROXY:\s*"(http[^"]+)""#, options: .regularExpression) else { continue }
+                let m = String(t[r])
+                if let q = m.range(of: #"http[^"]+"#, options: .regularExpression) { return String(m[q]) }
+            }
+        }
+        return nil
+    }
+
+    /// 实际用到的线路，设置页里显示
+    @Published var route: String = ""
+
+    /// 依次试：经 FCF 代理 → 终端环境里的代理/直连；每条都有超时，不会一直卡住
+    static func curlAttempts() -> [(label: String, args: [String])] {
+        var out: [(String, [String])] = []
+        if let p = fcfProxy() { out.append(("FCF 代理", ["--proxy", p])) }
+        out.append(("直接连接", []))
+        return out
+    }
+
+    /// 读最新版本信息：经 FCF 代理的 curl 优先；都不通再用本机 gh
     static func fetchLatest() -> Result<Release, Error> {
         var json: [String: Any]?
-        if let gh = ghPath {
-            let r = Shell.run(gh, ["api", "repos/\(repo)/releases/latest"], timeout: 20)
-            if r.code == 0, let d = r.output.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
-        }
-        if json == nil {
-            // 匿名读公开仓库。用 curl + 登录环境：终端里配的代理（HTTPS_PROXY 等）也会生效，直连 GitHub 常常连不上
+        var used = ""
+        for (label, extra) in curlAttempts() {
             let r = Shell.run("/usr/bin/curl", ["-fsSL", "--connect-timeout", "10", "--max-time", "25",
-                                                "-H", "Accept: application/vnd.github+json",
-                                                "https://api.github.com/repos/\(repo)/releases/latest"], timeout: 30)
-            if r.code == 0, let d = r.output.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any] }
+                                                "-H", "Accept: application/vnd.github+json"] + extra +
+                                               ["https://api.github.com/repos/\(repo)/releases/latest"], timeout: 30)
+            if r.code == 0, let d = r.output.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                json = j; used = label; break
+            }
         }
+        if json == nil, let gh = ghPath {
+            let r = Shell.run(gh, ["api", "repos/\(repo)/releases/latest"], timeout: 20)
+            if r.code == 0, let d = r.output.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: d) as? [String: Any]; used = "gh" }
+        }
+        DispatchQueue.main.async { Updater.shared.route = used }
         guard let j = json, let tag = j["tag_name"] as? String else {
-            return .failure(UpdateError(msg: ghPath == nil ? "读不到版本信息：仓库是私有的，需要本机装好并登录 gh" : "读不到版本信息，检查网络或 gh 登录状态"))
+            return .failure(UpdateError(msg: "连不上 GitHub，读不到版本信息。确认 FCF 已启动、网络正常后再试。"))
         }
         let assets = (j["assets"] as? [[String: Any]]) ?? []
         guard let zip = assets.first(where: { ($0["name"] as? String)?.hasSuffix(".zip") == true }),
@@ -150,18 +202,27 @@ final class Updater: ObservableObject {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("duihuatai-update-\(UUID().uuidString)")
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        // 下载或校验失败就把临时文件清掉，不留垃圾
+        do { return try downloadInto(work, r) } catch { try? fm.removeItem(at: work); throw error }
+    }
+
+    private static func downloadInto(_ work: URL, _ r: Release) throws -> URL {
+        let fm = FileManager.default
         let zip = work.appendingPathComponent(r.zipName)
-        if let gh = ghPath {
+        // 经 FCF 代理下载最稳；不通再直连，最后用本机 gh。每次最多 5 分钟、失败重试 2 次
+        if !r.zipURL.isEmpty {
+            for (label, extra) in curlAttempts() {
+                let res = Shell.run("/usr/bin/curl", ["-fL", "--retry", "2", "--connect-timeout", "15", "--max-time", "300"] + extra +
+                                                     ["-o", zip.path, r.zipURL], timeout: 320)
+                if res.code == 0, fm.fileExists(atPath: zip.path) { DispatchQueue.main.async { Updater.shared.route = label }; break }
+                try? fm.removeItem(at: zip)
+            }
+        }
+        if !fm.fileExists(atPath: zip.path), let gh = ghPath {
             let res = Shell.run(gh, ["release", "download", r.tag, "--repo", repo, "--pattern", r.zipName, "--dir", work.path, "--clobber"], timeout: 300)
             if res.code != 0 { try? fm.removeItem(at: zip) }
         }
-        if !fm.fileExists(atPath: zip.path), !r.zipURL.isEmpty {
-            // 同样走 curl + 登录环境里的代理；最多 5 分钟，失败重试 2 次，不会一直卡在「正在下载」
-            let res = Shell.run("/usr/bin/curl", ["-fL", "--retry", "2", "--connect-timeout", "15", "--max-time", "300",
-                                                  "-o", zip.path, r.zipURL], timeout: 320)
-            if res.code != 0 { try? fm.removeItem(at: zip) }
-        }
-        guard fm.fileExists(atPath: zip.path) else { throw UpdateError(msg: "下载超时，连不上 GitHub（可能需要开代理）") }
+        guard fm.fileExists(atPath: zip.path) else { throw UpdateError(msg: "下载失败：经 FCF 代理和直连都没能从 GitHub 下载安装包") }
         let out = work.appendingPathComponent("unzipped")
         let unzip = Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, out.path], timeout: 120)
         guard unzip.code == 0 else { throw UpdateError(msg: "解压失败：\(unzip.output)") }

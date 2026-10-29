@@ -551,6 +551,12 @@ final class ChatSession: ObservableObject, Identifiable {
         switch e["subtype"] as? String {
         case "init":
             lastInitAt = Date()
+            // 记下 FCF 给 Claude 用的代理：检查/下载更新时走同一条线路
+            if let pid = proc?.pid, UserDefaults.standard.string(forKey: "fcfProxy") == nil {
+                DispatchQueue.global(qos: .utility).async {
+                    if let v = StatusProbe.proxy(under: pid) { UserDefaults.standard.set(v, forKey: "fcfProxy") }
+                }
+            }
             if let s = e["session_id"] as? String { sessionId = s }
             if let m = e["model"] as? String { activeModel = m }
             if let pm = e["permissionMode"] as? String, let m = PermissionMode(rawValue: pm) { mode = m }
