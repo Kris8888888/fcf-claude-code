@@ -357,6 +357,9 @@ final class WeixinBridge: ObservableObject, RemoteSink {
         // 远程来的任务一律每步询问，需要授权的推到微信里确认（不管电脑上设的是什么）
         s.setMode(.default)
         s.remote = self
+        // 告诉 Claude 它在跟微信对话：不然它不知道回复会显示在哪，偶尔会自己脑补一段「输出格式要求」当成回复
+        s.contextNote = "用户现在是在手机微信里通过「微信 ClawBot」给你发消息，你的回复会直接显示在微信聊天里。"
+            + "请用简洁的中文回答，可以用列表和加粗，不要用表格和多级标题；需要用户确认的操作，客户端会另外发消息问他。"
         app?.addBackground(s)
         remoteSession = s
         return s

@@ -45,6 +45,8 @@ final class ChatSession: ObservableObject, Identifiable {
     /// 消息按顺序编码后再发（带图的消息在后台编码，不卡界面，也不会被后发的文字插队）
     private let sendQueue = DispatchQueue(label: "chat.send")
     private(set) var extraDirs: [String] = []
+    /// 追加给 Claude 的背景说明（比如「这是微信远程对话」），启动后台时带上
+    var contextNote: String?
     private(set) var initInfo: [String: Any]?      // 后台启动时报告的信息（版本、MCP 状态等），状态面板用
     var pid: Int32? { proc?.pid }   // /add-dir 加进来的额外文件夹          // 本轮回复从 items 的哪里开始，用来收集文件产物
     private var modeExplicit = false
@@ -88,7 +90,8 @@ final class ChatSession: ObservableObject, Identifiable {
             let disp = ThinkingPrefs.cliDisplay(cwd: cwd)
             try p.start(cwd: cwd, resume: sessionId, model: model.rawValue,
                         permissionMode: modeExplicit ? mode.rawValue : nil, addDirs: extraDirs,
-                        extraArgs: disp.map { ["--thinking-display", $0] } ?? [])
+                        extraArgs: (disp.map { ["--thinking-display", $0] } ?? [])
+                            + (contextNote.map { ["--append-system-prompt", $0] } ?? []))
             startedDisplay = disp
             proc = p
             started = true
