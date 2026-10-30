@@ -104,6 +104,9 @@ final class AppState: ObservableObject {
         // 微信 ClawBot：绑定过就自动开始收消息
         WeixinBridge.shared.app = self
         WeixinBridge.shared.startIfBound()
+        // 网页远程：开启过就自动开始
+        WebRemote.shared.app = self
+        WebRemote.shared.startIfEnabled()
     }
 
     private var historyGen = 0
@@ -236,6 +239,21 @@ final class AppState: ObservableObject {
         }
         let s = ChatSession(cwd: cwd ?? lastFolder)
         add(s)
+        return s
+    }
+
+    /// 网页远程用：全部对话（不受电脑上搜索框的影响）
+    func remoteRows() -> [SidebarRow] { allRows }
+
+    /// 网页远程打开一个对话：开着的直接用，历史的在后台载入（不切换你在电脑上正在看的对话）
+    func openRemote(_ id: String) -> ChatSession? {
+        if let s = sessions.first(where: { $0.id.uuidString == id }) { return s }
+        if let s = sessions.first(where: { $0.sessionId == id }) { return s }
+        guard let h = history.first(where: { $0.sessionId == id }) else { return nil }
+        let s = ChatSession(cwd: h.cwd, title: title(for: h.sessionId, fallback: h.title), sessionId: h.sessionId)
+        s.lastActive = h.modified
+        s.loadHistory(from: h.url)
+        addBackground(s)
         return s
     }
 

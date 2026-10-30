@@ -2,13 +2,14 @@ import SwiftUI
 import AppKit
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, thinking, weixin, appearance, permissions, env, plugins, mcp, skills, agents, commands, hooks, memory, raw, diagnose, about
+    case general, thinking, weixin, web, appearance, permissions, env, plugins, mcp, skills, agents, commands, hooks, memory, raw, diagnose, about
     var id: String { rawValue }
     var label: String {
         switch self {
         case .general: return "通用"
         case .thinking: return "思维链"
         case .weixin: return "微信 ClawBot"
+        case .web: return "网页远程"
         case .about: return "关于与更新"
         case .appearance: return "外观主题"
         case .permissions: return "权限"
@@ -29,6 +30,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .thinking: return "brain"
         case .weixin: return "message"
+        case .web: return "globe"
         case .about: return "info.circle"
         case .appearance: return "paintpalette"
         case .permissions: return "checkmark.shield"
@@ -86,6 +88,7 @@ struct SettingsRoot: View {
                     case .general: GeneralSettings(project: project)
                     case .thinking: ThinkingSettings(project: project)
                     case .weixin: WeixinSettings()
+                    case .web: WebRemoteSettings()
                     case .about: AboutSettings()
                     case .appearance: ThemeSettings()
                     case .permissions: PermissionSettings(project: project)
