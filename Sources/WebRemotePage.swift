@@ -11,11 +11,12 @@ enum WebRemotePage {
 <style>
 :root{
   --canvas:#F4F5F7;--paper:#FFFFFF;--sunk:#EEF0F3;--ink:#1D1F24;--muted:#6B7080;--line:#E1E4EA;
-  --accent:#4558CC;--run:#4558CC;--ok:#2E9E6A;--err:#D64545;--on-accent:#fff;--fs:15px;
+  --accent:#4558CC;--run:#4558CC;--ok:#2E9E6A;--err:#D64545;--on-accent:#fff;--fs:14px;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{background:var(--paper);color:var(--ink);font:var(--fs)/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+html{font-size:var(--fs)}
+body{background:var(--paper);color:var(--ink);font:1rem/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
 button,input,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -24,11 +25,11 @@ button{cursor:pointer}
 /* 登录 */
 #login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--canvas);padding:16px}
 #login form{width:min(360px,100%);background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:28px 24px}
-#login h1{font-size:19px;margin:0 0 4px;font-weight:600}
-#login p{margin:0 0 20px;color:var(--muted);font-size:13px}
-#code{width:100%;font-size:26px;letter-spacing:.35em;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--sunk)}
+#login h1{font-size:1.267rem;margin:0 0 4px;font-weight:600}
+#login p{margin:0 0 20px;color:var(--muted);font-size:0.8667rem}
+#code{width:100%;font-size:1.733rem;letter-spacing:.35em;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--sunk)}
 #login .btn{width:100%;margin-top:14px}
-#loginErr{color:var(--err);font-size:13px;min-height:20px;margin-top:8px}
+#loginErr{color:var(--err);font-size:0.8667rem;min-height:20px;margin-top:8px}
 
 .btn{border:0;border-radius:8px;padding:8px 14px;background:var(--accent);color:var(--on-accent);font-weight:500}
 .btn.quiet{background:transparent;color:var(--muted);padding:8px 10px}
@@ -43,23 +44,24 @@ aside .top{padding:14px 12px 8px;display:flex;flex-direction:column;gap:8px}
 #search{width:100%;padding:7px 10px;border:1px solid transparent;border-radius:8px;background:var(--sunk)}
 #rows{overflow:auto;padding:4px 8px 16px;flex:1}
 .group{margin-top:10px}
-.gname{font-size:12px;color:var(--muted);padding:4px 8px}
-.row{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:0;background:transparent;padding:7px 8px;border-radius:7px;font-size:14px}
+.gname{font-size:0.8rem;color:var(--muted);padding:4px 8px}
+.row{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:0;background:transparent;padding:7px 8px;border-radius:7px;font-size:0.9333rem}
 .row:hover{background:color-mix(in srgb,var(--line) 55%,transparent)}
 .row.on{background:var(--line);font-weight:500}
 .row .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row time{font-size:12px;color:var(--muted)}
+.row time{font-size:0.8rem;color:var(--muted)}
 .dot{width:6px;height:6px;border-radius:50%;flex:none}
 .dot.busy{background:var(--run)}.dot.att{background:var(--accent)}
 
 main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 header{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--line);min-height:56px}
-#menuBtn{display:none;border:0;background:transparent;font-size:20px;padding:4px 6px}
+#sizeBtn{flex:none;border:1px solid var(--line);background:transparent;border-radius:999px;padding:2px 9px;font-size:.8rem;color:var(--muted)}
+#menuBtn{display:none;border:0;background:transparent;font-size:1.333rem;padding:4px 6px}
 header .ttl{flex:1;min-width:0}
-header .ttl b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-header .ttl span{font-size:12px;color:var(--muted)}
+header .ttl b{display:block;font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header .ttl span{font-size:0.8rem;color:var(--muted)}
 /* 连接状态：一眼看出还连着这台电脑没有 */
-#link{display:flex;flex:none;max-width:46%;overflow:hidden;text-overflow:ellipsis;align-items:center;gap:6px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;white-space:nowrap}
+#link{display:flex;flex:none;max-width:46%;overflow:hidden;text-overflow:ellipsis;align-items:center;gap:6px;font-size:0.8rem;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;white-space:nowrap}
 #link i{width:7px;height:7px;border-radius:50%;background:var(--ok)}
 #link.off i{background:var(--err)}
 
@@ -69,16 +71,16 @@ header .ttl span{font-size:12px;color:var(--muted)}
 .u{display:flex;justify-content:flex-end;margin:18px 0}
 .u .b{max-width:82%;background:color-mix(in srgb,var(--accent) 14%,var(--paper));border-radius:14px;padding:9px 14px;white-space:pre-wrap;word-break:break-word}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.chip{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:2px 8px;background:var(--paper);color:var(--muted)}
+.chip{font-size:0.8rem;border:1px solid var(--line);border-radius:6px;padding:2px 8px;background:var(--paper);color:var(--muted)}
 .rail{border-left:1.5px solid var(--line);padding:2px 0 2px 18px;margin-left:6px}
 .a{margin:6px 0 14px}
-.step{display:flex;gap:8px;align-items:baseline;color:var(--muted);font-size:13.5px;padding:3px 0;cursor:pointer;user-select:none}
+.step{display:flex;gap:8px;align-items:baseline;color:var(--muted);font-size:0.9rem;padding:3px 0;cursor:pointer;user-select:none}
 .step .s{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none;transform:translateY(-1px)}
 .step .s.running{background:var(--run);animation:pulse 1.2s ease-in-out infinite}
 .step .s.failed{background:var(--err)}
 .step .lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .detail{margin:4px 0 8px 15px}
-pre{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:420px;margin:6px 0}
+pre{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;font:0.8333rem/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:420px;margin:6px 0}
 code{font:.9em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--sunk);border-radius:4px;padding:1px 5px}
 pre code{background:none;padding:0}
 .md p{margin:.5em 0}.md h1,.md h2,.md h3,.md h4{margin:1em 0 .4em;line-height:1.35}.md h1{font-size:1.3em}.md h2{font-size:1.18em}.md h3{font-size:1.06em}
@@ -86,25 +88,25 @@ pre code{background:none;padding:0}
 .md table{border-collapse:collapse;margin:.6em 0;display:block;overflow:auto}.md th,.md td{border:1px solid var(--line);padding:5px 9px;text-align:left}.md th{background:var(--sunk)}
 .md blockquote{margin:.5em 0;padding-left:12px;border-left:3px solid var(--line);color:var(--muted)}
 .md a{color:var(--accent)}
-.notice{color:var(--muted);font-size:13px;text-align:center;margin:10px 0}
-.error{color:var(--err);font-size:13.5px;white-space:pre-wrap;margin:8px 0}
+.notice{color:var(--muted);font-size:0.8667rem;text-align:center;margin:10px 0}
+.error{color:var(--err);font-size:0.9rem;white-space:pre-wrap;margin:8px 0}
 .card{border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:14px;margin:8px 0}
 .card.ask{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
-.card h4{margin:0 0 8px;font-size:14.5px}
+.card h4{margin:0 0 8px;font-size:0.9667rem}
 .card .acts{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:10px}
-.done{color:var(--muted);font-size:13px}
+.done{color:var(--muted);font-size:0.8667rem}
 .opt{display:block;width:100%;text-align:left;border:1px solid var(--line);background:var(--paper);border-radius:9px;padding:8px 12px;margin:6px 0}
 .opt small{display:block;color:var(--muted)}
 .opt.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--paper))}
-.busy{display:flex;align-items:center;gap:8px;color:var(--run);font-size:13.5px;margin:6px 0 14px}
+.busy{display:flex;align-items:center;gap:8px;color:var(--run);font-size:0.9rem;margin:6px 0 14px}
 .spin{width:12px;height:12px;border:2px solid color-mix(in srgb,var(--run) 30%,transparent);border-top-color:var(--run);border-radius:50%;animation:spin .8s linear infinite}
-.more{display:block;margin:0 auto 14px;font-size:12.5px}
+.more{display:block;margin:0 auto 14px;font-size:0.8333rem}
 
 .composer{padding:10px 18px 16px;border-top:1px solid transparent}
 .box{max-width:780px;margin:0 auto;border:1px solid var(--line);border-radius:14px;background:var(--paper);padding:10px 12px}
 #input{width:100%;border:0;outline:0;resize:none;background:transparent;min-height:26px;max-height:200px;line-height:1.55}
 .bar{display:flex;align-items:center;gap:10px;margin-top:6px}
-.bar .mode{font-size:12px;color:var(--muted);flex:1}
+.bar .mode{font-size:0.8rem;color:var(--muted);flex:1}
 #sendBtn,#stopBtn{border-radius:999px;width:34px;height:34px;padding:0;display:grid;place-items:center}
 #stopBtn{background:var(--ink)}
 #stopBtn span{width:11px;height:11px;background:var(--paper);border-radius:2px}
@@ -145,6 +147,7 @@ pre code{background:none;padding:0}
     <header>
       <button id="menuBtn" aria-label="对话列表">☰</button>
       <div class="ttl"><b id="title">选一个对话</b><span id="folder"></span></div>
+      <button id="sizeBtn" aria-label="切换字号">Aa</button>
       <div id="link"><i></i><span id="linkText">已连着电脑</span></div>
     </header>
     <div id="scroll"><div id="items"><div class="empty">从左边选一个对话，或新建一个。</div></div></div>
@@ -176,6 +179,11 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 
 // ---------- 主题：和电脑上的客户端一样 ----------
 function hexLum(h){ const n = parseInt(h.slice(1),16); const c=[n>>16&255,n>>8&255,n&255].map(v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)}); return .2126*c[0]+.7152*c[1]+.0722*c[2]; }
+// 字号跟着这台设备走：小 / 标准 / 大，浏览器记住
+const SIZES = [['小',13],['标准',14],['大',15.5]];
+function curSize(){ try { const v = +localStorage.getItem('fcfrc-size'); return SIZES.findIndex(x=>x[1]===v) >= 0 ? v : 14; } catch(_) { return 14; } }
+function applySize(){ const v = curSize(); document.documentElement.style.setProperty('--fs', v + 'px'); const b = document.getElementById('sizeBtn'); if (b) b.title = '字号：' + SIZES.find(x=>x[1]===v)[0] + '（点一下切换）'; }
+function nextSize(){ const i = SIZES.findIndex(x=>x[1]===curSize()); try { localStorage.setItem('fcfrc-size', SIZES[(i+1)%SIZES.length][1]); } catch(_){} applySize(); }
 async function applyTheme(){
   try{
     const t = await (await fetch('/api/theme', {credentials:'same-origin'})).json();
@@ -183,7 +191,7 @@ async function applyTheme(){
     const p = dark ? t.dark : t.light, r = document.documentElement.style;
     for (const k in p) r.setProperty('--' + k, p[k]);
     r.setProperty('--on-accent', hexLum(p.accent) > .5 ? '#111' : '#fff');
-    r.setProperty('--fs', (15 * (t.fontScale || 1)).toFixed(1) + 'px');
+    applySize();
     document.querySelector('meta[name=viewport]');
   }catch(e){}
 }
@@ -230,6 +238,8 @@ function renderList(){
 $('#rows').onclick = e => { const b = e.target.closest('.row'); if (b) select(b.dataset.id); };
 $('#search').oninput = renderList;
 $('#newBtn').onclick = async () => { try { const r = await api('/api/new', {}); select(r.id); loadList(); } catch(err){ alert(err.message); } };
+$('#sizeBtn').onclick = e => { e.stopPropagation(); nextSize(); };
+applySize();
 $('#menuBtn').onclick = e => { e.stopPropagation(); $('#side').classList.toggle('open'); };
 document.querySelector('main').addEventListener('click', () => $('#side').classList.remove('open'));
 
