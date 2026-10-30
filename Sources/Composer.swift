@@ -240,6 +240,7 @@ struct Composer: View {
             return
         }
         guard canSend else { return }
+        session.leaveRemoteMode()
         session.send(text: text, images: draft.images, files: draft.files)
         draft.text = ""
         draft.images = []

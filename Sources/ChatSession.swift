@@ -51,6 +51,8 @@ final class ChatSession: ObservableObject, Identifiable {
     var pid: Int32? { proc?.pid }   // /add-dir 加进来的额外文件夹          // 本轮回复从 items 的哪里开始，用来收集文件产物
     private var modeExplicit = false
     private var modeBeforePlan: PermissionMode?
+    /// 网页/微信发消息时临时降下来的模式；回到电脑上发消息时换回去
+    private var modeBeforeRemote: PermissionMode?
     private var deltaBuf = ""
     private var flushScheduled = false
     private(set) var lastEventAt = Date()
@@ -326,10 +328,25 @@ final class ChatSession: ObservableObject, Identifiable {
     }
 
     func setMode(_ m: PermissionMode) {
+        modeBeforeRemote = nil
         if m == .plan && mode != .plan { modeBeforePlan = mode }
         mode = m
         modeExplicit = true
         if proc?.isRunning == true { control(["subtype": "set_permission_mode", "mode": m.rawValue]) }
+    }
+
+    /// 远程来的消息不用「全部放行」。strict：连「自动改文件」也降成每步询问
+    func enterRemoteMode(strict: Bool = false) {
+        guard strict ? (mode != .default && mode != .plan) : mode == .bypassPermissions else { return }
+        let was = mode
+        setMode(.default)
+        modeBeforeRemote = was
+    }
+
+    /// 在电脑上发消息：如果之前是被远程临时改成每步询问的，换回原来的模式
+    func leaveRemoteMode() {
+        guard let m = modeBeforeRemote else { return }
+        if mode == .default { setMode(m) } else { modeBeforeRemote = nil }
     }
 
     func setModel(_ m: ModelChoice) {

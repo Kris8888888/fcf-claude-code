@@ -57,7 +57,7 @@ enum OptionalFlags {
     }
     /// 从启动失败的输出里认出「不认识的参数」，记下来；返回记下的参数
     static func noteUnknown(in output: String) -> String? {
-        for flag in ["--replay-user-messages", "--thinking-display"] where output.contains(flag) && output.lowercased().contains("unknown option") {
+        for flag in ["--replay-user-messages", "--thinking-display", "--allow-dangerously-skip-permissions"] where output.contains(flag) && output.lowercased().contains("unknown option") {
             var list = UserDefaults.standard.stringArray(forKey: "unsupportedCLIFlags") ?? []
             if !list.contains(flag) { list.append(flag); UserDefaults.standard.set(list, forKey: "unsupportedCLIFlags") }
             return flag
@@ -85,6 +85,8 @@ final class ClaudeProcess {
                     "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio"]
         // 回传确认：你在 Claude 忙时发的消息什么时候被收下，靠它判断还要不要继续转圈
         if !OptionalFlags.unsupported("--replay-user-messages") { args.append("--replay-user-messages") }
+        // 让对话中途能切到「全部放行」：不加的话，以每步询问启动的对话切过去会被 CLI 拒绝。只是允许切换，不改变启动时的模式
+        if !OptionalFlags.unsupported("--allow-dangerously-skip-permissions") { args.append("--allow-dangerously-skip-permissions") }
         if let resume { args += ["--resume", resume] }
         if let model, !model.isEmpty { args += ["--model", model] }
         if let permissionMode, !permissionMode.isEmpty { args += ["--permission-mode", permissionMode] }

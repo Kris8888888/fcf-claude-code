@@ -333,6 +333,8 @@ final class WeixinBridge: ObservableObject, RemoteSink {
         if s.busy {
             reply("Claude 还在做上一件事，这条消息会排在后面处理。回复「停止」可以打断它。")
         }
+        // 中间在电脑上用过这个对话会换回原模式，这里再降一次
+        s.enterRemoteMode(strict: true)
         s.send(text: t, images: [])
         startTyping()
     }
@@ -355,7 +357,7 @@ final class WeixinBridge: ObservableObject, RemoteSink {
         if let s = remoteSession, app?.sessions.contains(where: { $0 === s }) ?? true { return s }
         let s = ChatSession(cwd: workFolder, title: "微信远程")
         // 远程来的任务一律每步询问，需要授权的推到微信里确认（不管电脑上设的是什么）
-        s.setMode(.default)
+        s.enterRemoteMode(strict: true)
         s.remote = self
         // 告诉 Claude 它在跟微信对话：不然它不知道回复会显示在哪，偶尔会自己脑补一段「输出格式要求」当成回复
         s.contextNote = "用户现在是在手机微信里通过「微信 ClawBot」给你发消息，你的回复会直接显示在微信聊天里。"

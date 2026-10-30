@@ -298,7 +298,7 @@ final class WebRemote: ObservableObject {
             return ("200 OK", snapshot(s, limit: Int(r.query["limit"] ?? "") ?? 160))
         case ("POST", "/api/new"):
             let s = ChatSession(cwd: app.lastFolder)
-            s.setMode(.default)
+            s.enterRemoteMode(strict: true)
             app.addBackground(s)
             return ("200 OK", ["id": s.id.uuidString])
         default: break
@@ -310,7 +310,8 @@ final class WebRemote: ObservableObject {
             let text = (b["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return ("400 Bad Request", ["error": "消息是空的"]) }
             // 远程来的消息不用「全部放行」：改文件、跑命令都要在网页上确认
-            if s.mode == .bypassPermissions { s.setMode(.default) }
+            // 回到电脑上发消息时会自动换回原来的模式
+            s.enterRemoteMode()
             s.send(text: text, images: [])
         case "/api/stop": s.interrupt()
         case "/api/allow":
