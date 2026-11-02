@@ -8,7 +8,7 @@ final class ChatSession: ObservableObject, Identifiable {
     @Published var cwd: String
     @Published var sessionId: String?
     @Published var items: [ChatItem] = []
-    @Published var busy = false
+    @Published var busy = false { didSet { if busy != oldValue, PetStore.isOn { PetStore.shared.refreshClaude() } } }
     @Published var loading = false
     @Published var status = ""
     @Published var model: ModelChoice = .inherit
@@ -20,7 +20,7 @@ final class ChatSession: ObservableObject, Identifiable {
     @Published var started = false
     /// 流式输出时发一下，只用来让列表跟着滚动（不触发整个对话页重算）
     let streamTicks = PassthroughSubject<Void, Never>()
-    @Published var needsAttention = false  // 有等你回答/确认的卡片（侧栏蓝点）
+    @Published var needsAttention = false { didSet { if needsAttention != oldValue, PetStore.isOn { PetStore.shared.refreshClaude() } } }  // 有等你回答/确认的卡片（侧栏蓝点）
     @Published var stalled = false         // 忙着但很久没收到任何消息，连接可能断了
 
     // 输入框草稿跟着对话走，切换对话不会丢；单独一个对象，打字不会刷新整段对话列表
@@ -520,6 +520,13 @@ final class ChatSession: ObservableObject, Identifiable {
             if let c = e["total_cost_usd"] as? Double {
                 UsageStore.shared.addCost(c - costUSD)
                 costUSD = c
+            }
+            if PetStore.isOn {
+                // 宠物按这一轮用掉的 token 吃饭（缓存读取不算，那是「回锅」的）
+                let u = e["usage"] as? [String: Any] ?? [:]
+                let food = ["input_tokens", "cache_creation_input_tokens", "output_tokens"].reduce(0) { $0 + ((u[$1] as? Int) ?? 0) }
+                let isErr = (e["is_error"] as? Bool) == true
+                PetStore.shared.finishedTurn(tokens: food, ok: !isErr && !interrupted, error: isErr && !interrupted)
             }
             if (e["is_error"] as? Bool) == true {
                 let r = (e["result"] as? String) ?? (e["subtype"] as? String ?? "出错了")

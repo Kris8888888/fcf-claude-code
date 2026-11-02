@@ -23,6 +23,7 @@ struct DuihuataiApp: App {
             }
                 .environmentObject(app)
                 .background(SettingsDemoOpener())
+                .background(PetHostReader())
                 .frame(minWidth: 820, minHeight: 560)
                 .onAppear { delegate.app = app; Notifier.shared.app = app }
         }
@@ -60,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         // 后台进程意外退出时写管道不能把整个 App 带崩
         signal(SIGPIPE, SIG_IGN)
+        // 仅用于测试：把宠物每个姿势画成图片后退出
+        if let dir = ProcessInfo.processInfo.environment["DUIHUATAI_PET_SNAPSHOT"] { PetSnapshot.run(dir); exit(0) }
         ThemeStore.shared.applyAppearance()
         Updater.shared.start()
         Notifier.shared.start()
@@ -67,7 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global().async { _ = LoginEnv.shared }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { app?.shutdownAll() }
+    func applicationWillTerminate(_ n: Notification) {
+        app?.shutdownAll()
+        if PetStore.isOn { PetStore.shared.saveNowSync() }
+    }
 }
 
 struct RootView: View {
@@ -103,6 +109,7 @@ struct SettingsDemoOpener: View {
     @Environment(\.openSettings) private var openSettings
     var body: some View {
         Color.clear.onAppear {
+            PetSettingsOpener.action = { openSettings() }
             if ProcessInfo.processInfo.environment["DUIHUATAI_SETTINGS_DEMO"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { openSettings() }
             }
