@@ -90,6 +90,11 @@ struct Pen {
 enum PetPainter {
     static let unit = CGSize(width: 120, height: 112)
 
+    /// 头顶（团子含呆毛）在画布里的高度，气泡贴着它放
+    static func headTop(_ c: PetCharacter, perch: Bool) -> CGFloat {
+        c == .crab ? 48 + (perch ? 14 : 0) : 23 + (perch ? 6 : 0)
+    }
+
     /// 小螃蟹身体宽几格
     static let crabW: CGFloat = 12
     /// 趴着时窗口顶边在画布里的位置
@@ -821,11 +826,12 @@ struct PetRoot: View {
     private var s: CGFloat { CGFloat(store.data.size) }
 
     var body: some View {
-        VStack(spacing: 2 * s) {
+        VStack(spacing: 0) {
             Spacer(minLength: 0)
             if let b = store.bubble {
                 PetBubble(text: b, s: s)
                     .onTapGesture { store.dismissBubble() }
+                    .padding(.bottom, -bubblePull)
                     .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
             }
             pet
@@ -851,6 +857,15 @@ struct PetRoot: View {
             .popover(isPresented: $store.showCard, arrowEdge: .top) {
                 Themed { PetCard() }
             }
+    }
+
+    /// 气泡往下拉到头顶附近：画布上方是给问号、爱心留的空，不拉的话气泡会飘得很远
+    private var bubblePull: CGFloat {
+        let perch = PetWindow.shared.perched && store.pose != .away
+        let top = PetPainter.headTop(store.character, perch: perch)
+        let props: Set<PetPose> = [.waiting, .petted, .celebrate, .eating, .sleeping, .working]
+        let gap: CGFloat = props.contains(store.pose) ? 30 : 6
+        return max(0, top - gap) * s
     }
 
     /// 这条线以上算头：趴着时身子沉下去了，线也跟着往下
