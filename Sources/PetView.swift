@@ -28,6 +28,7 @@ struct PetFrame {
     var back = ""
     var character = PetCharacter.crab
     var perch = false          // 趴在窗口顶边：边线以下藏在窗口后面
+    var focusLeft: Double?     // 专注剩下的秒数：头顶挂个倒计时
 }
 
 // 画笔：Core Graphics 上包一层，用法跟 SwiftUI 的 GraphicsContext 一样（复制一份就是独立的变换和透明度）。
@@ -106,6 +107,7 @@ enum PetPainter {
             if f.perch { g.translateBy(x: 0, y: -16) }
             drawTag(&g, f); return
         }
+        defer { if let left = f.focusLeft, f.pose != .dragged { focusPill(&g, f, left) } }
         guard f.perch else { drawCharacter(&g, f); return }
         // 趴在窗口顶边：身子往下沉，边线以下剪掉（像躲在窗口后面），再把两只手搭在边上
         var body = g
@@ -113,6 +115,17 @@ enum PetPainter {
         body.translateBy(x: 0, y: f.character == .crab ? 14 : 6)
         drawCharacter(&body, f)
         paws(&g, f)
+    }
+
+    /// 专注倒计时：头顶上一个小牌子
+    private static func focusPill(_ g: inout Pen, _ f: PetFrame, _ left: Double) {
+        let top = headTop(f.character, perch: f.perch)
+        let s = Int(left.rounded(.up))
+        let text = String(format: "%d:%02d", s / 60, s % 60)
+        let w: CGFloat = text.count > 4 ? 40 : 34
+        let r = CGRect(x: 60 - w / 2, y: top - 21, width: w, height: 14)
+        g.fill(Path(roundedRect: r, cornerRadius: 7), with: .color(PetInk.line))
+        g.text(text, size: 9.5, weight: .bold, mono: true, color: PetInk.amber, at: CGPoint(x: r.midX, y: r.midY))
     }
 
     private static func drawCharacter(_ g: inout Pen, _ f: PetFrame) {
@@ -853,7 +866,11 @@ struct PetRoot: View {
                 guard case .active(let p) = phase, p.y < headLine, store.pose != .away else { return }
                 if stroke.feed(x: p.x) { store.pat() }
             }
+            .onDrop(of: [.fileURL], isTargeted: Binding(get: { store.dropTargeted }, set: { store.dropTargeted = $0 })) { providers in
+                receive(providers); return true
+            }
             .contextMenu { PetMenu() }
+            .background(Color.clear.popover(isPresented: $store.showRemind, arrowEdge: .top) { Themed { PetRemindInput() } })
             .popover(isPresented: $store.showCard, arrowEdge: .top) {
                 Themed { PetCard() }
             }
@@ -864,16 +881,31 @@ struct PetRoot: View {
         let perch = PetWindow.shared.perched && store.pose != .away
         let top = PetPainter.headTop(store.character, perch: perch)
         let props: Set<PetPose> = [.waiting, .petted, .celebrate, .eating, .sleeping, .working]
-        let gap: CGFloat = props.contains(store.pose) ? 30 : 6
+        let gap: CGFloat = props.contains(store.pose) || store.focusing ? 30 : 6
         return max(0, top - gap) * s
     }
 
     /// 这条线以上算头：趴着时身子沉下去了，线也跟着往下
     private var headLine: CGFloat { (PetWindow.shared.perched ? 68 : 54) * s }
 
+    /// 拖进来的文件：取出路径交给新对话
+    private func receive(_ providers: [NSItemProvider]) {
+        var urls: [URL] = []
+        let group = DispatchGroup()
+        for p in providers {
+            group.enter()
+            _ = p.loadObject(ofClass: URL.self) { u, _ in
+                if let u, u.isFileURL { DispatchQueue.main.async { urls.append(u) } }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { store.handOff(urls) }
+    }
+
     private func tap(_ p: CGPoint) {
         if store.pose == .away { store.showCard = true; return }
         if store.anyWaiting && store.data.reactToClaude && store.openWaiting() { return }
+        if store.openLastDone() { return }
         if p.y < headLine { store.pat() } else { store.poke() }
     }
 
@@ -985,6 +1017,7 @@ struct PetCanvas: NSViewRepresentable {
         let store = PetStore.shared
         var f = PetFrame(pose: store.pose, t: now.timeIntervalSinceReferenceDate, actT: now.timeIntervalSince(store.actStart))
         f.character = store.character
+        if store.focusing { f.focusLeft = store.focusLeft }
         f.perch = PetWindow.shared.perched && store.pose != .dragged
         if let trip = store.data.trip { f.place = trip.place; f.back = PetStore.hm(trip.back) }
         if let p = PetWindow.shared.panel {
@@ -1051,6 +1084,17 @@ struct PetMenu: View {
             Button(store.asleep ? "叫醒它" : "哄它睡觉") { store.toggleSleep() }
         }
         Divider()
+        Button("提醒我…") { NSApp.activate(ignoringOtherApps: true); store.showRemind = true }
+        if store.focusing {
+            Button("结束专注（还剩 \(Int(store.focusLeft / 60) + 1) 分钟）") { store.stopFocus() }
+        } else {
+            Menu("专注一会儿") {
+                Button("25 分钟") { store.startFocus(minutes: 25) }
+                Button("50 分钟") { store.startFocus(minutes: 50) }
+                Button("15 分钟") { store.startFocus(minutes: 15) }
+            }
+        }
+        Divider()
         Button("看看状态") { store.showCard = true }
         Button("\(name)的日记") { PetDiaryWindow.show() }
         Button("安静一小时") { store.quietForAnHour() }
@@ -1085,6 +1129,40 @@ struct PetCard: View {
                 Text("在一起 \(store.daysTogether) 天").font(T.small).foregroundStyle(T.muted)
             }
             Text(store.statusLine).font(.system(size: fs(13))).foregroundStyle(T.ink)
+            if let today = d.days[PetStore.today], today.tokens > 0 || today.tasks > 0 || today.focus > 0 {
+                Text(todayLine(today)).font(T.small).foregroundStyle(T.muted)
+            }
+            if !store.activeSessions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(store.activeSessions, id: \.id) { s in
+                        Button { store.open(s) } label: {
+                            HStack(spacing: 6) {
+                                Circle().fill(s.needsAttention ? PetInk.amber : PetInk.teal).frame(width: 6, height: 6)
+                                Text(store.title(of: s)).lineLimit(1).truncationMode(.tail).foregroundStyle(T.ink)
+                                Spacer()
+                                Text(s.needsAttention ? "等你确认" : "在忙").foregroundStyle(T.muted)
+                            }
+                            .font(T.small)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if !d.reminders.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(d.reminders.prefix(5)) { r in
+                        HStack(spacing: 6) {
+                            Text(r.due.map { PetCard.when($0) } ?? "便签").foregroundStyle(T.muted).frame(width: 64, alignment: .leading)
+                            Text(r.text).lineLimit(1).foregroundStyle(T.ink)
+                            Spacer()
+                            Button { store.removeReminder(r) } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
+                                .buttonStyle(.plain).foregroundStyle(T.muted).help(r.due == nil ? "删掉这张便签" : "取消这个提醒")
+                        }
+                        .font(T.small)
+                    }
+                }
+            }
             if d.trip == nil {
                 VStack(spacing: 7) {
                     bar("饱腹", d.fullness, PetInk.amber)
@@ -1098,6 +1176,9 @@ struct PetCard: View {
                     else { Button("零食 \(store.snacksLeft)") { store.feedSnack() }.disabled(store.snacksLeft == 0) }
                     Button("出去玩") { store.goTravel() }.disabled(!store.canTravel.ok).help(store.canTravel.why)
                     Spacer()
+                    Button("提醒") { store.showCard = false; NSApp.activate(ignoringOtherApps: true); DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { store.showRemind = true } }
+                    if store.focusing { Button("结束专注") { store.stopFocus() } }
+                    else { Button("专注") { store.startFocus(minutes: 25) }.help("专注 25 分钟") }
                     Button("日记") { store.showCard = false; PetDiaryWindow.show() }
                 }
                 .controlSize(.small)
@@ -1111,7 +1192,19 @@ struct PetCard: View {
             }
         }
         .padding(16)
-        .frame(width: 280)
+        .frame(width: 300)
+    }
+
+    private func todayLine(_ t: PetDay) -> String {
+        var parts = ["今天吃了 \(PetStore.tokenText(t.tokens)) token", "做完 \(t.tasks) 件事"]
+        if t.focus > 0 { parts.append("专注 \(t.focus) 分钟") }
+        return parts.joined(separator: "，")
+    }
+
+    static func when(_ d: Date) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : (Calendar.current.isDateInTomorrow(d) ? "明天 HH:mm" : "M/d HH:mm")
+        return f.string(from: d)
     }
 
     private var affinityProgress: Double {
@@ -1277,5 +1370,38 @@ enum PetSnapshot {
         if let img = b.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
             try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("bubble.png"))
         }
+    }
+}
+
+
+// MARK: 提醒我：一句话说时间和事
+
+struct PetRemindInput: View {
+    @ObservedObject var store = PetStore.shared
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("20分钟后 开会 / 15:30 交周报 / 明天9点 周会", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .focused($focused)
+                .onSubmit { submit() }
+            HStack {
+                Text("不写时间就记成便签").font(T.small).foregroundStyle(T.muted)
+                Spacer()
+                Button("记下") { submit() }.buttonStyle(PrimaryButton()).disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
+        .onAppear { DispatchQueue.main.async { focused = true } }
+    }
+
+    private func submit() {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        store.addReminder(text)
+        text = ""
+        store.showRemind = false
     }
 }

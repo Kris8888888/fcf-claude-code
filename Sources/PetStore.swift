@@ -14,6 +14,8 @@ struct PetDay: Codable {
     var sick = false
     var lateNight = false
     var waits = 0           // 等你确认的次数
+    var focus = 0           // 专注了几分钟
+    var reminders = 0       // 提醒了你几件事
 
     init() {}
     init(from d: Decoder) throws {
@@ -26,6 +28,8 @@ struct PetDay: Codable {
         sick = try c.decodeIfPresent(Bool.self, forKey: .sick) ?? false
         lateNight = try c.decodeIfPresent(Bool.self, forKey: .lateNight) ?? false
         waits = try c.decodeIfPresent(Int.self, forKey: .waits) ?? 0
+        focus = try c.decodeIfPresent(Int.self, forKey: .focus) ?? 0
+        reminders = try c.decodeIfPresent(Int.self, forKey: .reminders) ?? 0
     }
 }
 
@@ -35,6 +39,13 @@ struct Postcard: Codable, Identifiable, Hashable {
     var line: String
     var gift: String
     var date: Date
+}
+
+/// 提醒和便签：有时间的到点提醒，没时间的就是一张便签
+struct PetReminder: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var text: String
+    var due: Date?
 }
 
 struct PetTrip: Codable {
@@ -78,6 +89,9 @@ struct PetData: Codable {
     var wander = true
     var flags: [String: String] = [:]     // 每天只做一次的事：记日期
     var totalTasks = 0
+    var reminders: [PetReminder] = []
+    var focusUntil: Date?
+    var focusMinutes = 0
 
     init() {}
     init(from d: Decoder) throws {
@@ -108,6 +122,9 @@ struct PetData: Codable {
         wander = try c.decodeIfPresent(Bool.self, forKey: .wander) ?? true
         flags = try c.decodeIfPresent([String: String].self, forKey: .flags) ?? [:]
         totalTasks = try c.decodeIfPresent(Int.self, forKey: .totalTasks) ?? 0
+        reminders = try c.decodeIfPresent([PetReminder].self, forKey: .reminders) ?? []
+        focusUntil = try c.decodeIfPresent(Date.self, forKey: .focusUntil)
+        focusMinutes = try c.decodeIfPresent(Int.self, forKey: .focusMinutes) ?? 0
     }
 }
 
@@ -137,6 +154,12 @@ final class PetStore: ObservableObject {
     @Published var dragging = false
     @Published var visible = true          // 窗口被挡住/在别的桌面时停动画
     @Published var showCard = false
+    @Published var showRemind = false
+    @Published var dropTargeted = false
+    /// 你没在看的时候做完的那个对话：点宠物直接过去
+    @Published private(set) var lastDone: (id: UUID, at: Date)?
+    private var remindTimer: Timer?
+    private var focusTimer: Timer?
 
     weak var app: AppState?
 
@@ -191,8 +214,11 @@ final class PetStore: ObservableObject {
         tick?.invalidate()
         tick = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.minute() }
         tick?.tolerance = 10
+        scheduleReminders()
+        resumeFocus()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.dailyGreeting() }
         if ProcessInfo.processInfo.environment["DUIHUATAI_PET_SCRIPT"] != nil { runTestScript() }
+        if ProcessInfo.processInfo.environment["DUIHUATAI_PET_SCRIPT2"] != nil { runTestScript2() }
         if ProcessInfo.processInfo.environment["DUIHUATAI_PET_BUSY"] != nil { anyBusy = true }   // 测 CPU 用
         if ProcessInfo.processInfo.environment["DUIHUATAI_PET_FPS"] != nil {
             Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
@@ -205,6 +231,8 @@ final class PetStore: ObservableObject {
     private func stop() {
         tick?.invalidate(); tick = nil
         wakeWatch?.invalidate(); wakeWatch = nil
+        remindTimer?.invalidate(); remindTimer = nil
+        focusTimer?.invalidate(); focusTimer = nil
         actTimer?.cancel(); bubbleTimer?.cancel()
         act = nil; bubble = nil; showCard = false
         PetWindow.shared.hide()
@@ -215,6 +243,7 @@ final class PetStore: ObservableObject {
     var pose: PetPose {
         if data.trip != nil { return .away }
         if dragging { return .dragged }
+        if dropTargeted { return .eating }
         if let act { return PetPose(rawValue: act.rawValue) ?? .idle }
         if data.reactToClaude && anyWaiting { return .waiting }
         if data.reactToClaude && anyBusy { return .working }
@@ -298,7 +327,9 @@ final class PetStore: ObservableObject {
     }
 
     /// 一轮回答结束：按这轮用掉的 token 吃饭
-    func finishedTurn(tokens: Int, ok: Bool, error: Bool) {
+    func finishedTurn(_ s: ChatSession? = nil, tokens: Int, ok: Bool, error: Bool) {
+        if ok, let s { noteDone(s) }
+        checkQuota()
         let food = max(0, tokens)
         data.totalTasks += ok ? 1 : 0
         bumpDay { d in d.tokens += food; if ok { d.tasks += 1 } }
@@ -571,24 +602,24 @@ final class PetStore: ObservableObject {
         activeMinutes = idle < 300 ? activeMinutes + 1 : 0
 
         // 你走开了或者夜深了：睡觉
-        if !asleep, !anyBusy, act == nil, (idle > 600 || (Self.isNight(now) && idle > 120) || data.energy < 8) {
+        if !asleep, !anyBusy, !focusing, act == nil, (idle > 600 || (Self.isNight(now) && idle > 120) || data.energy < 8) {
             fallAsleep(byUser: false)
         }
         // 你不在、它也闲着：偶尔自己出去玩一趟（一天最多一次）
-        if data.wander, !anyBusy, !anyWaiting, idle > 1200, !Self.isNight(now), canTravel.ok,
+        if data.wander, !anyBusy, !anyWaiting, !focusing, idle > 1200, !Self.isNight(now), canTravel.ok,
            data.flags["autoTrip"] != Self.today, Double.random(in: 0..<1) < 0.03 {
             data.flags["autoTrip"] = Self.today
             if asleep { asleep = false; wakeWatch?.invalidate() }
             goTravel()
         }
-        if data.care, !asleep { careReminders(now: now, idle: idle) }
+        if data.care, !asleep, !focusing { careReminders(now: now, idle: idle) }
         // 被拖到桌面上、闲了 5 分钟：爬回窗口上趴着
         if data.perch, !data.perchedNow, !dragging, act == nil, !anyWaiting, now.timeIntervalSince(detachedAt) > 300, PetWindow.shared.canPerch {
             data.perchedNow = true
             PetWindow.shared.relayout()
             if !asleep { play(.wave, 1.5) }
         }
-        if !asleep, idle < 300, now.timeIntervalSince(lastChatter) > Double.random(in: 1500...3000) { chatter() }
+        if !asleep, !focusing, idle < 300, now.timeIntervalSince(lastChatter) > Double.random(in: 1500...3000) { chatter() }
         save()
     }
 
@@ -785,6 +816,8 @@ enum PetDiary {
         if d.tasks > 0 { parts.append(pick(["陪你做完了 \(d.tasks) 件事。", "我们一起做完了 \(d.tasks) 件事。"]) + (d.tasks >= 15 ? "你今天好拼。" : "")) }
         if d.waits > 0 { parts.append("有 \(d.waits) 次 Claude 等你确认，我都帮你喊了。") }
         if d.pets > 0 { parts.append(d.pets >= 10 ? "被摸了 \(d.pets) 次头，头发都乱了，但是很开心。" : "被摸了 \(d.pets) 次头。") }
+        if d.focus > 0 { parts.append(d.focus >= 100 ? "你专注了 \(d.focus) 分钟，我一直没敢出声。" : "陪你专注了 \(d.focus) 分钟。") }
+        if d.reminders > 0 { parts.append("帮你记着 \(d.reminders) 件事，到点都喊你了。") }
         if d.snacks > 0 { parts.append("吃了 \(d.snacks) 份零食。") }
         if !d.trips.isEmpty { parts.append("出门去了\(d.trips.joined(separator: "、"))。") }
         if d.sick { parts.append(pick(["生了一场小病，吃了药好多了。", "今天有点不舒服，谢谢你照顾我。"])) }
@@ -827,5 +860,282 @@ extension PetStore {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 41) { self.saveNowSync(); exit(0) }
+    }
+}
+
+
+// MARK: 帮你做点事：提醒、便签、专注、接文件、做完喊你、额度提醒
+
+extension PetStore {
+    // ---- 提醒和便签 ----
+
+    /// 「20分钟后 开会」「15:30 交周报」「明天9点 周会」「下午3点半 打电话」；没写时间就记成便签
+    @discardableResult
+    func addReminder(_ input: String) -> String {
+        let raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return "" }
+        let (due, rest) = Self.parseTime(raw, now: Date())
+        var text = rest
+        for p in ["提醒我", "记得", "叫我", "别忘了"] where text.hasPrefix(p) { text = String(text.dropFirst(p.count)) }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: " ，,。：:").union(.whitespaces))
+        if text.isEmpty { text = due == nil ? raw : "到点啦" }
+        data.reminders.append(PetReminder(text: text, due: due))
+        data.reminders.sort { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
+        save()
+        scheduleReminders()
+        let msg: String
+        if let due {
+            let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = Calendar.current.isDateInToday(due) ? "HH:mm" : (Calendar.current.isDateInTomorrow(due) ? "明天 HH:mm" : "M月d日 HH:mm")
+            msg = "好，\(f.string(from: due)) 提醒你：\(text)"
+        } else {
+            msg = "记下了：\(text)。双击我能看到。"
+        }
+        play(.wave, 1.5)
+        say(msg, for: 5)
+        return msg
+    }
+
+    func removeReminder(_ r: PetReminder) {
+        data.reminders.removeAll { $0.id == r.id }
+        save()
+        scheduleReminders()
+    }
+
+    /// 只挂一个计时器，指向最近的那条提醒
+    func scheduleReminders() {
+        remindTimer?.invalidate(); remindTimer = nil
+        guard data.enabled, let next = data.reminders.compactMap(\.due).min() else { return }
+        let t = Timer(fire: max(next, Date().addingTimeInterval(0.5)), interval: 0, repeats: false) { [weak self] _ in self?.fireReminders() }
+        t.tolerance = 1
+        RunLoop.main.add(t, forMode: .common)
+        remindTimer = t
+    }
+
+    private func fireReminders() {
+        let now = Date()
+        let due = data.reminders.filter { ($0.due ?? .distantFuture) <= now.addingTimeInterval(1) }
+        guard !due.isEmpty else { scheduleReminders(); return }
+        data.reminders.removeAll { r in due.contains { $0.id == r.id } }
+        bumpDay { $0.reminders += due.count }
+        save()
+        if asleep { wake(silently: true) }
+        if data.trip != nil { returnHome(early: true) }
+        let text = due.map(\.text).joined(separator: "；")
+        // 提醒不受「安静一小时」影响
+        let wasQuiet = quietUntil
+        quietUntil = .distantPast
+        play(.celebrate, 3)
+        say("到点啦：\(text)", for: 20)
+        quietUntil = wasQuiet
+        Notifier.shared.remind(title: "\(data.name) 提醒你", body: text)
+        NSSound(named: "Glass")?.play()
+        scheduleReminders()
+    }
+
+    static func parseTime(_ s: String, now: Date) -> (Date?, String) {
+        let cal = Calendar.current
+        func cut(_ r: Range<String.Index>) -> String { (String(s[..<r.lowerBound]) + " " + String(s[r.upperBound...])).trimmingCharacters(in: .whitespaces) }
+        func num(_ t: String) -> Double? {
+            if let v = Double(t) { return v }
+            let map: [Character: Double] = ["一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, "半": 0.5]
+            if t == "十五" { return 15 }
+            if t.count == 1, let v = map[t.first!] { return v }
+            return nil
+        }
+        // 相对时间：20分钟后、1.5小时后、半小时后、两个小时后
+        if let r = s.range(of: #"(\d+(?:\.\d+)?|[一两二三四五六七八九十半]|十五)\s*(个)?\s*(分钟|分|min|小时|钟头|h)\s*(以?后|之后)?"#, options: .regularExpression) {
+            let m = String(s[r])
+            let n = m.range(of: #"^(\d+(?:\.\d+)?|十五|[一两二三四五六七八九十半])"#, options: .regularExpression).flatMap { num(String(m[$0])) } ?? 0
+            let hours = m.contains("小时") || m.contains("钟头") || m.contains("h")
+            if n > 0, m.contains("后") || m.contains("分钟") || hours {
+                return (now.addingTimeInterval(n * (hours ? 3600 : 60)), cut(r))
+            }
+        }
+        // 钟点：(明天|后天)(上午|下午|晚上)15:30 / 3点 / 3点半 / 9点15
+        if let r = s.range(of: #"(今天|明天|后天)?\s*(早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*([:：点])\s*(\d{1,2}|半)?\s*分?"#, options: .regularExpression) {
+            let m = String(s[r])
+            let day = m.hasPrefix("明天") ? 1 : (m.hasPrefix("后天") ? 2 : 0)
+            let nums = m.matches(#"\d+"#)
+            guard var h = nums.first.flatMap(Int.init), h < 24 else { return (nil, s) }
+            var min = 0
+            if m.contains("半") { min = 30 } else if nums.count > 1 { min = Int(nums[1]) ?? 0 }
+            if (m.contains("下午") || m.contains("晚上")) && h < 12 { h += 12 }
+            if m.contains("中午") && h < 6 { h += 12 }
+            guard min < 60 else { return (nil, s) }
+            var d = cal.date(bySettingHour: h, minute: min, second: 0, of: cal.date(byAdding: .day, value: day, to: now)!)!
+            if day == 0 && d <= now {
+                // 没说上下午、又已经过了：1～7 点当下午（3 点开会）；8 点以后当明天早上（9 点站会）
+                if h >= 1 && h <= 7 && !m.contains("上午") && !m.contains("早上"), let pm = cal.date(byAdding: .hour, value: 12, to: d), pm > now { d = pm }
+                else { d = cal.date(byAdding: .day, value: 1, to: d)! }
+            }
+            return (d, cut(r))
+        }
+        return (nil, s)
+    }
+
+    // ---- 专注钟 ----
+
+    var focusing: Bool { (data.focusUntil ?? .distantPast) > Date() }
+    var focusLeft: TimeInterval { max(0, (data.focusUntil ?? .distantPast).timeIntervalSinceNow) }
+
+    func startFocus(minutes: Int) {
+        data.focusUntil = Date().addingTimeInterval(Double(minutes) * 60)
+        data.focusMinutes = minutes
+        save()
+        if asleep { wake(silently: true) }
+        play(.wave, 1.5)
+        say("开始专注 \(minutes) 分钟，我不说话了。", for: 3.5)
+        resumeFocus()
+    }
+
+    func stopFocus() {
+        guard focusing, let until = data.focusUntil else { return }
+        let done = max(0, Int((Double(data.focusMinutes) * 60 - until.timeIntervalSinceNow) / 60))
+        bumpDay { $0.focus += done }
+        data.focusUntil = nil
+        focusTimer?.invalidate(); focusTimer = nil
+        save()
+        say(done > 0 ? "专注了 \(done) 分钟，也很棒了。" : "好，先不专注了。", for: 4)
+    }
+
+    private func resumeFocus() {
+        focusTimer?.invalidate(); focusTimer = nil
+        guard let until = data.focusUntil else { return }
+        guard until > Date() else { finishFocus(); return }
+        let t = Timer(fire: until, interval: 0, repeats: false) { [weak self] _ in self?.finishFocus() }
+        t.tolerance = 1
+        RunLoop.main.add(t, forMode: .common)
+        focusTimer = t
+    }
+
+    private func finishFocus() {
+        guard data.focusUntil != nil else { return }
+        bumpDay { $0.focus += data.focusMinutes }
+        data.focusUntil = nil
+        data.mood = min(100, data.mood + 5)
+        data.affection += 1
+        save()
+        if asleep { wake(silently: true) }
+        play(.celebrate, 3)
+        say("专注 \(data.focusMinutes) 分钟完成！起来走走，喝口水。", for: 10)
+        Notifier.shared.remind(title: "专注结束", body: "\(data.focusMinutes) 分钟到了，休息一下吧。")
+        NSSound(named: "Glass")?.play()
+    }
+
+    // ---- 把文件拖给它：开个新对话，文件放进输入框 ----
+
+    func handOff(_ urls: [URL]) {
+        guard let app, !urls.isEmpty else { return }
+        let s = app.newSession()
+        s.draft.add(urls)
+        app.selected = s.id
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.canBecomeMain && !($0 is NSPanel) }?.makeKeyAndOrderFront(nil)
+        play(.eating, 2)
+        say(urls.count == 1 ? "收到「\(urls[0].lastPathComponent)」，放进新对话了，跟 Claude 说说要做什么吧。" : "收到 \(urls.count) 个文件，放进新对话了，跟 Claude 说说要做什么吧。", for: 6)
+    }
+
+    // ---- 做完喊你 ----
+
+    fileprivate func noteDone(_ s: ChatSession) {
+        guard data.reactToClaude, data.trip == nil, let app else { return }
+        // 正看着这个对话就不喊
+        if NSApp.isActive && app.selected == s.id { return }
+        lastDone = (s.id, Date())
+        let title = app.title(for: s.sessionId, fallback: s.title)
+        let short = title.count > 16 ? String(title.prefix(15)) + "…" : title
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self] in
+            guard let self, self.lastDone?.id == s.id, !s.busy else { return }
+            self.say("「\(short)」做完了，点我去看看。", for: 10)
+        }
+    }
+
+    /// 点宠物：刚做完的那个对话（10 分钟内）
+    func openLastDone() -> Bool {
+        guard let d = lastDone, Date().timeIntervalSince(d.at) < 600, let app, app.sessions.contains(where: { $0.id == d.id }) else { return false }
+        lastDone = nil
+        dismissBubble()
+        NSApp.activate(ignoringOtherApps: true)
+        app.selected = d.id
+        NSApp.windows.first { $0.canBecomeMain && !($0 is NSPanel) }?.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    func open(_ s: ChatSession) {
+        guard let app else { return }
+        showCard = false
+        NSApp.activate(ignoringOtherApps: true)
+        app.selected = s.id
+        NSApp.windows.first { $0.canBecomeMain && !($0 is NSPanel) }?.makeKeyAndOrderFront(nil)
+    }
+
+    /// 状态卡里列出来的：在忙、在等你的对话
+    var activeSessions: [ChatSession] {
+        (app?.sessions ?? []).filter { $0.busy || $0.needsAttention }.prefix(4).map { $0 }
+    }
+
+    func title(of s: ChatSession) -> String { app?.title(for: s.sessionId, fallback: s.title) ?? s.title }
+
+    // ---- 额度提醒：5 小时额度到 80%、95% 各说一次 ----
+
+    fileprivate func checkQuota() {
+        let u = UsageStore.shared
+        guard let f = u.fiveHour else { return }
+        let window = u.fiveHourReset.map { String(Int($0.timeIntervalSince1970)) } ?? Self.today
+        for (mark, line) in [(0.95, "5 小时额度只剩一点了，重要的事先做。"), (0.8, "5 小时额度已经用了 \(Int(f * 100))%，悠着点用。")] where f >= mark {
+            let key = "quota\(Int(mark * 100))"
+            if data.flags[key] != window {
+                data.flags[key] = window
+                if mark == 0.95 { data.flags["quota80"] = window }
+                var s = line
+                if let r = u.fiveHourReset { s += "\(PetStore.hm(r)) 恢复。" }
+                say(s, for: 8)
+            }
+            break
+        }
+    }
+}
+
+private extension String {
+    func matches(_ pattern: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return re.matches(in: self, range: NSRange(startIndex..., in: self)).compactMap { Range($0.range, in: self).map { String(self[$0]) } }
+    }
+}
+
+
+extension PetStore {
+    /// 测试：提醒解析、到点提醒、专注、接文件、做完喊你
+    func runTestScript2() {
+        func out(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
+        let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm"
+        let base = Calendar.current.date(bySettingHour: 14, minute: 0, second: 0, of: Date())!
+        for q in ["20分钟后 开会", "提醒我 半小时后喝水", "两个小时后 看下构建", "15:30 交周报", "下午3点半 打电话", "3点 开会", "明天9点 周会", "早上8点 吃药", "9点15分 站会", "晚上8点 健身", "买牛奶", "1.5小时后 收衣服"] {
+            let (d, rest) = Self.parseTime(q, now: base)
+            out("parse [\(q)] -> \(d.map { f.string(from: $0) } ?? "nil") | \(rest)")
+        }
+        let steps: [(Double, String, () -> Void)] = [
+            (2, "remind-add", { self.addReminder("提醒我 0.05分钟后 喝水"); self.addReminder("买牛奶") }),
+            (7, "remind-fired", {}),
+            (8, "focus", { self.startFocus(minutes: 1) }),
+            (9, "focus-shot", {}),
+            (10, "handoff", { self.handOff([URL(fileURLWithPath: "/tmp/petdata/pet.json")]) }),
+            (12, "done", { if let s = self.app?.sessions.first { self.app?.selected = nil; self.noteDone(s) } }),
+            (15, "done-bubble", {}),
+            (16, "open-done", { out("openLastDone=\(self.openLastDone())") }),
+            (17, "quota", { UsageStore.shared.fiveHour = 0.83; self.checkQuota() }),
+            (19, "stopfocus", { self.stopFocus() }),
+        ]
+        for (at, tag, fn) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                fn()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    out("[\(tag)] pose=\(self.pose.rawValue) bubble=\(self.bubble ?? "-") reminders=\(self.data.reminders.map { "\($0.text)@\($0.due.map { f.string(from: $0) } ?? "-")" }) focus=\(self.focusing ? Int(self.focusLeft) : -1) today=\(self.data.days[Self.today].map { "focus\($0.focus)/rem\($0.reminders)" } ?? "-") draftFiles=\(self.app?.current?.draft.files.map(\.lastPathComponent) ?? [])")
+                    PetWindow.shared.selfShot(tag)
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 21) { self.saveNowSync(); exit(0) }
     }
 }

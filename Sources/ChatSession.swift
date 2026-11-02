@@ -526,7 +526,7 @@ final class ChatSession: ObservableObject, Identifiable {
                 let u = e["usage"] as? [String: Any] ?? [:]
                 let food = ["input_tokens", "cache_creation_input_tokens", "output_tokens"].reduce(0) { $0 + ((u[$1] as? Int) ?? 0) }
                 let isErr = (e["is_error"] as? Bool) == true
-                PetStore.shared.finishedTurn(tokens: food, ok: !isErr && !interrupted, error: isErr && !interrupted)
+                PetStore.shared.finishedTurn(self, tokens: food, ok: !isErr && !interrupted, error: isErr && !interrupted)
             }
             if (e["is_error"] as? Bool) == true {
                 let r = (e["result"] as? String) ?? (e["subtype"] as? String ?? "出错了")

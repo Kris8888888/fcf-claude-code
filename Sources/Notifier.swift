@@ -13,6 +13,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         c.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
+    /// 宠物的提醒、专注结束
+    func remind(title: String, body: String) {
+        guard Bundle.main.bundleIdentifier != nil else { print("[notify] \(title) \(body)"); return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
     func taskDone(_ s: ChatSession) {
         // 正看着这个对话就不打扰
         if NSApp.isActive, app?.selected == s.id { return }
