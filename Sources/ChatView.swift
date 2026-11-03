@@ -108,8 +108,15 @@ struct Transcript: View {
     /// 顶上一抽，内容变矮，滚动位置落到内容外面，画面就成了一片空白
     @State private var startItem: UUID?
     /// 最近一次有新内容的时间（引用类型，改它不触发重绘）
-    final class Clock { var lastGrowth = Date.distantPast; var sig = 0; var userScroll = Date.distantPast }
+    final class Clock {
+        var lastGrowth = Date.distantPast
+        var sig = 0
+        var userScroll = Date.distantPast
+        var follows: [Date] = []      // 最近几次「跳到底部」，用来发现跳不到底的死循环
+    }
     @State private var clock = Clock()
+
+    static let scrollLog = ProcessInfo.processInfo.environment["DUIHUATAI_SCROLL_LOG"] != nil
 
     init(session: ChatSession) {
         self.session = session
@@ -169,9 +176,26 @@ struct Transcript: View {
         return all.firstIndex { (pos[Self.firstItem($0).id] ?? 0) >= idx } ?? 0
     }
 
-    /// 跟到最底部：新内容刚加进来时还没排版，立刻跳只能跳到旧的底部；等排完再跳一次才是真的底部
-    private func follow(_ proxy: ScrollViewProxy) {
+    /// 有新内容（新消息、正在输出、开始/结束忙）：记下时间，接下来一小会儿底部被推远都算内容在长
+    private func grew(_ proxy: ScrollViewProxy) {
         clock.lastGrowth = Date()
+        follow(proxy)
+    }
+
+    /// 跟到最底部：新内容刚加进来时还没排版，立刻跳只能跳到旧的底部；等排完再跳一次才是真的底部。
+    /// 注意：跳本身不能算「有新内容」——懒加载列表跳过去后新露出的几段要重新量高度，底部又挪了，
+    /// 要是把跳也算成内容在长，就会一直跳、一直量，主线程被占满（11-03 两次卡死就是这个）
+    /// fromLayout：不是因为新内容、而是排版后底部挪了才跳的。只数这种，正常输出时的跟随不算
+    private func follow(_ proxy: ScrollViewProxy, fromLayout: Bool = false) {
+        let now = Date()
+        if fromLayout { clock.follows = clock.follows.filter { now.timeIntervalSince($0) < 1.5 } + [now] }
+        // 保险：1.5 秒里因为排版跳了 8 次还没到底，说明高度一直对不上，先不跟了，右下角会出现「回到最新」
+        if fromLayout && clock.follows.count > 8 {
+            clock.follows.removeAll()
+            clock.lastGrowth = .distantPast
+            if atBottom { atBottom = false }
+            return
+        }
         proxy.scrollTo("bottom", anchor: .bottom)
         DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) }
     }
@@ -232,20 +256,22 @@ struct Transcript: View {
             // 离底部 150pt 以内都算「在底部」，流式输出变长也不会误判成你在往上翻
             .onPreferenceChange(BottomOffsetKey.self) { y in
                 let v = y - viewport < 150
+                if Self.scrollLog { FileHandle.standardError.write("[scroll] dist=\(Int(y - viewport)) atBottom=\(atBottom) follows=\(clock.follows.count)\n".data(using: .utf8)!) }
                 // 内容变了（新消息、回复在输出）把底部推远，这不是你往上翻：继续跟到底部，别停
                 let sig = session.items.count &* 1_000_003 &+ (session.items.last?.text.utf16.count ?? 0)
                 let grew = sig != clock.sig
                 clock.sig = sig
+                if grew { clock.lastGrowth = Date() }
                 // 但你正在用触控板/鼠标滚动（比如往上翻看）时不拽你回去
                 let scrolling = Date().timeIntervalSince(clock.userScroll) < 0.5
-                if !v, atBottom, !scrolling, grew || Date().timeIntervalSince(clock.lastGrowth) < 0.6 { follow(proxy); return }
+                if !v, atBottom, !scrolling, grew || Date().timeIntervalSince(clock.lastGrowth) < 0.6 { follow(proxy, fromLayout: !grew); return }
                 if v != atBottom { atBottom = v }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSScrollView.willStartLiveScrollNotification)) { _ in clock.userScroll = Date() }
             .onReceive(NotificationCenter.default.publisher(for: NSScrollView.didLiveScrollNotification)) { _ in clock.userScroll = Date() }
             .overlay(alignment: .bottom) {
                 if !atBottom {
-                    Button { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } } label: {
+                    Button { clock.follows.removeAll(); atBottom = true; withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } } label: {
                         Image(systemName: "arrow.down").font(.system(size: fs(13), weight: .bold)).foregroundStyle(T.ink)
                             .frame(width: 34, height: 34)
                             .background(Circle().fill(T.paper))
@@ -261,10 +287,11 @@ struct Transcript: View {
             }
             // 只有停在底部时才跟随新内容；你往上翻看时不会被拽下去。自己发消息总会回到底部
             .onChange(of: session.items.count) {
-                if atBottom || session.items.last?.kind == .user { follow(proxy) } 
+                if session.items.last?.kind == .user { atBottom = true }
+                if atBottom { grew(proxy) }
             }
-            .onReceive(session.streamTicks) { if atBottom { follow(proxy) } }
-            .onChange(of: session.busy) { if atBottom { follow(proxy) } }
+            .onReceive(session.streamTicks) { if atBottom { grew(proxy) } }
+            .onChange(of: session.busy) { if atBottom { grew(proxy) } }
         }
     }
 }

@@ -107,6 +107,10 @@ final class AppState: ObservableObject {
         // 网页远程：开启过就自动开始
         WebRemote.shared.app = self
         WebRemote.shared.startIfEnabled()
+        // 仅用于测试：DUIHUATAI_AUTOSEND=文字，启动后自动在当前对话发一条（配合 -claudePath 假 claude）
+        if let t = ProcessInfo.processInfo.environment["DUIHUATAI_AUTOSEND"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.current?.send(text: t, images: []) }
+        }
         // 桌面宠物：开着才启动，关着什么都不跑
         PetStore.shared.app = self
         DispatchQueue.main.async { PetStore.shared.startIfEnabled() }

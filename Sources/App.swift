@@ -15,7 +15,8 @@ struct DuihuataiApp: App {
     var body: some Scene {
         WindowGroup {
             Themed {
-                if gate.phase == .passed {
+                // 仅用于测试：DUIHUATAI_SKIP_GATE 跳过启动检查（配合 -claudePath 假 claude）
+                if gate.phase == .passed || ProcessInfo.processInfo.environment["DUIHUATAI_SKIP_GATE"] != nil {
                     RootView()
                 } else {
                     LaunchGateView(gate: gate)

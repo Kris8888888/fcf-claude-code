@@ -182,6 +182,16 @@ struct SelectableText: NSViewRepresentable {
     final class TV: NSTextView {
         // 让滚轮交给外层的对话列表滚动
         override func scrollWheel(with event: NSEvent) { nextResponder?.scrollWheel(with: event) }
+        /// 量过的高度：按宽度记。懒加载列表估算位置时会反复来量同一段，每次从头排一整段长文会把主线程拖死
+        var heights: [CGFloat: CGFloat] = [:]
+        var lastWidth: CGFloat?
+        /// 真正摆好的宽度跟最后一次量的不一样时，排版宽度跟上（只在宽度真变了时）
+        override func setFrameSize(_ s: NSSize) {
+            super.setFrameSize(s)
+            if let tc = textContainer, s.width > 0, abs(tc.containerSize.width - s.width) > 0.5 {
+                tc.containerSize = NSSize(width: s.width, height: .greatestFiniteMagnitude)
+            }
+        }
     }
 
     func makeNSView(context: Context) -> TV {
@@ -192,7 +202,8 @@ struct SelectableText: NSViewRepresentable {
         tv.isRichText = true
         tv.textContainerInset = .zero
         tv.textContainer?.lineFragmentPadding = 0
-        tv.textContainer?.widthTracksTextView = true
+        // 宽度只在量高度时设：跟着视图尺寸变的话，摆放一次又会重排一次
+        tv.textContainer?.widthTracksTextView = false
         tv.isVerticallyResizable = false
         tv.isHorizontallyResizable = false
         tv.linkTextAttributes = [.foregroundColor: NSColor(T.accent), .underlineStyle: NSUnderlineStyle.single.rawValue, .cursor: NSCursor.pointingHand]
@@ -201,16 +212,25 @@ struct SelectableText: NSViewRepresentable {
     }
 
     func updateNSView(_ tv: TV, context: Context) {
-        if tv.textStorage?.isEqual(to: attr) != true { tv.textStorage?.setAttributedString(attr) }
+        if tv.textStorage?.isEqual(to: attr) != true {
+            tv.textStorage?.setAttributedString(attr)
+            tv.heights.removeAll()
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView tv: TV, context: Context) -> CGSize? {
-        var w = proposal.width ?? 640
-        if !w.isFinite || w <= 0 { w = 640 }
+        // 没给宽度（只是问理想大小）时用上次的真实宽度，别拿一个假宽度把整段重排一遍
+        var w = proposal.width ?? tv.lastWidth ?? 640
+        if !w.isFinite || w <= 0 { w = tv.lastWidth ?? 640 }
+        w = w.rounded(.down)
+        if proposal.width != nil { tv.lastWidth = w }
+        if let h = tv.heights[w] { return CGSize(width: w, height: h) }
         guard let lm = tv.layoutManager, let tc = tv.textContainer else { return nil }
-        tc.containerSize = NSSize(width: w, height: .greatestFiniteMagnitude)
+        if tc.containerSize.width != w { tc.containerSize = NSSize(width: w, height: .greatestFiniteMagnitude) }
         lm.ensureLayout(for: tc)
-        let h = lm.usedRect(for: tc).height
-        return CGSize(width: w, height: ceil(h) + 2)
+        let h = ceil(lm.usedRect(for: tc).height) + 2
+        if tv.heights.count > 6 { tv.heights.removeAll() }
+        tv.heights[w] = h
+        return CGSize(width: w, height: h)
     }
 }
