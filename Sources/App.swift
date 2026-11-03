@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         // 后台进程意外退出时写管道不能把整个 App 带崩
         signal(SIGPIPE, SIG_IGN)
+        AppLog.start()
         // 仅用于测试：把宠物每个姿势画成图片后退出
         if let dir = ProcessInfo.processInfo.environment["DUIHUATAI_PET_SNAPSHOT"] { PetSnapshot.run(dir); exit(0) }
         ThemeStore.shared.applyAppearance()
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ n: Notification) {
+        AppLog.write("退出")
         app?.shutdownAll()
         if PetStore.isOn { PetStore.shared.saveNowSync() }
     }

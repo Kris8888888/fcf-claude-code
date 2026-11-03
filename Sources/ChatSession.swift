@@ -207,7 +207,15 @@ final class ChatSession: ObservableObject, Identifiable {
 
     // MARK: 用户操作
 
+    /// 日志：记一笔，同时更新「现在在看什么」（卡住时看门狗写进日志）
+    func logContext(_ what: String) {
+        let ctx = "对话「\(title.prefix(30))」\(items.count) 条\(busy ? "，正在回答" : "")"
+        AppLog.setContext(ctx)
+        AppLog.write("\(what) · \(ctx)")
+    }
+
     func send(text raw: String, images: [NSImage], files: [URL] = []) {
+        logContext("发送消息（\(raw.count) 字\(images.isEmpty ? "" : "，\(images.count) 张图")\(files.isEmpty ? "" : "，\(files.count) 个文件")）")
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty || !files.isEmpty else { return }
 
@@ -497,6 +505,7 @@ final class ChatSession: ObservableObject, Identifiable {
                 it.toolState = (b["is_error"] as? Bool) == true ? .failed : .done
             }
         case "result":
+            logContext((e["is_error"] as? Bool) == true ? "回答出错" : "回答结束")
             finishStreaming()
             cancelPending()
             // 这一轮里新建 / 修改的文件，作为产物卡片放在回复末尾

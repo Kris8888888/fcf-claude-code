@@ -44,6 +44,12 @@ struct AboutSettings: View {
                 }
                 Button("在 GitHub 查看所有版本和更新说明") { NSWorkspace.shared.open(URL(string: Updater.releasesPage)!) }
                     .buttonStyle(.link)
+                Button("打开运行日志文件夹") {
+                    try? FileManager.default.createDirectory(at: AppLog.dir, withIntermediateDirectories: true)
+                    NSWorkspace.shared.open(AppLog.dir)
+                }
+                .buttonStyle(.link)
+                .help("卡住、出错时把里面的 app.log 发给开发者")
             } header: {
                 Text("下载")
             } footer: {

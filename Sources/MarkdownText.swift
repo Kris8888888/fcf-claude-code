@@ -185,6 +185,7 @@ struct SelectableText: NSViewRepresentable {
         /// 量过的高度：按宽度记。懒加载列表估算位置时会反复来量同一段，每次从头排一整段长文会把主线程拖死
         var heights: [CGFloat: CGFloat] = [:]
         var lastWidth: CGFloat?
+        weak var lastAttr: NSAttributedString?
         /// 真正摆好的宽度跟最后一次量的不一样时，排版宽度跟上（只在宽度真变了时）
         override func setFrameSize(_ s: NSSize) {
             super.setFrameSize(s)
@@ -212,7 +213,10 @@ struct SelectableText: NSViewRepresentable {
     }
 
     func updateNSView(_ tv: TV, context: Context) {
-        if tv.textStorage?.isEqual(to: attr) != true {
+        // 写完的回复每次拿到的是缓存里同一个对象：认得出就直接跳过，别把一整段长文逐字比一遍（11-03 卡死的位置之一）
+        if tv.lastAttr === attr { return }
+        tv.lastAttr = attr
+        if tv.textStorage?.length != attr.length || tv.textStorage?.isEqual(to: attr) != true {
             tv.textStorage?.setAttributedString(attr)
             tv.heights.removeAll()
         }

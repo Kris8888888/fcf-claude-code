@@ -191,6 +191,7 @@ struct Transcript: View {
         if fromLayout { clock.follows = clock.follows.filter { now.timeIntervalSince($0) < 1.5 } + [now] }
         // 保险：1.5 秒里因为排版跳了 8 次还没到底，说明高度一直对不上，先不跟了，右下角会出现「回到最新」
         if fromLayout && clock.follows.count > 8 {
+            session.logContext("自动跟随反复跳不到底，已停下")
             clock.follows.removeAll()
             clock.lastGrowth = .distantPast
             if atBottom { atBottom = false }

@@ -62,6 +62,7 @@ final class AppState: ObservableObject {
     @Published var sessions: [ChatSession] = []
     @Published var selected: UUID? {
         didSet {
+            if oldValue != selected, let s = sessions.first(where: { $0.id == selected }) { s.logContext("切到对话") }
             // 切走的旧对话如果只是点开看了看（没发消息、没在跑、没草稿），从内存里放掉；再点会从记录重新读
             guard oldValue != selected, let old = oldValue, let s = sessions.first(where: { $0.id == old }),
                   !s.started, !s.busy, s.sessionId != nil,
