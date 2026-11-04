@@ -205,7 +205,9 @@ struct Transcript: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                // 不用懒加载列表：它靠「估算高度」摆放，长对话里估算和实际一直对不上，会反复重排、跳底，把主线程卡死（11-03/04 多次）。
+                // 反正只画最近 60 段（往前翻每次加 80 段），一次排好反而稳定、位置也准
+                VStack(alignment: .leading, spacing: 0) {
                     let all = rows
                     let from = firstShown(all)
                     if from > 0 {

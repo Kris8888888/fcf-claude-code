@@ -108,6 +108,13 @@ final class AppState: ObservableObject {
         // 网页远程：开启过就自动开始
         WebRemote.shared.app = self
         WebRemote.shared.startIfEnabled()
+        // 仅用于测试：DUIHUATAI_OPEN_SESSION=会话 ID，启动后直接打开那个历史对话
+        if let id = ProcessInfo.processInfo.environment["DUIHUATAI_OPEN_SESSION"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, let s = self.openRemote(id) else { return }
+                self.selected = s.id
+            }
+        }
         // 仅用于测试：DUIHUATAI_AUTOSEND=文字，启动后自动在当前对话发一条（配合 -claudePath 假 claude）
         if let t = ProcessInfo.processInfo.environment["DUIHUATAI_AUTOSEND"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.current?.send(text: t, images: []) }
