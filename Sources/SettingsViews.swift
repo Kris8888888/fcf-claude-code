@@ -191,7 +191,13 @@ struct GeneralSettings: View {
                 }
                 Section("其他") {
                     BoolRow(label: "提交记录里署名 Claude", key: ["includeCoAuthoredBy"], file: f, defaultOn: true)
-                    IntRow(label: "对话记录保留天数", key: ["cleanupPeriodDays"], file: f, placeholder: "默认 30")
+                    // Claude Code 默认每次启动都会删掉 30 天前的对话记录，客户端左侧列表里的老对话就这样消失了
+                    Toggle("保留全部对话记录", isOn: Binding(get: { ((f.value(["cleanupPeriodDays"]) as? Int) ?? 30) >= 3650 },
+                                                    set: { f.set(["cleanupPeriodDays"], $0 ? 36500 : nil) }))
+                        .help("不打开的话，Claude Code 每次启动会自动删掉 30 天前的对话记录，删了找不回来")
+                    if ((f.value(["cleanupPeriodDays"]) as? Int) ?? 30) < 3650 {
+                        IntRow(label: "对话记录保留天数", key: ["cleanupPeriodDays"], file: f, placeholder: "默认 30，到期自动删除")
+                    }
                     TextPicker(label: "终端主题（只影响终端版）", value: f.value(["theme"]) as? String ?? "",
                                options: ["", "dark", "light", "dark-daltonized", "light-daltonized"],
                                names: ["跟随默认", "深色", "浅色", "深色（色弱友好）", "浅色（色弱友好）"]) { f.set(["theme"], $0.isEmpty ? nil : $0) }

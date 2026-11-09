@@ -43,6 +43,7 @@ enum History {
         }
         files.sort { $0.1 > $1.1 }
         return mergeContinuations(files.prefix(limit).compactMap { entry(url: $0.0, modified: $0.1) })
+            .sorted { $0.modified > $1.modified }
     }
 
     /// 同一段对话被拆成多个文件时（终端里续接旧对话会新建文件、把历史复制过去），只保留最新的那个文件：
@@ -128,6 +129,9 @@ enum History {
         return false
     }
 
+    private static let isoFrac: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    private static let iso = ISO8601DateFormatter()
+
     static func entry(url: URL, modified: Date) -> HistoryEntry? {
         guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? h.close() }
@@ -172,8 +176,16 @@ enum History {
             }
             if aiTitle == nil, o["type"] as? String == "ai-title" { aiTitle = o["aiTitle"] as? String }
         }
-        var tailUuids = Set<String>(), tailTitle: String?
+        var tailUuids = Set<String>(), tailTitle: String?, lastTalk: Date?
         for line in tail.split(separator: 0x0A).reversed() {
+            // 最后一次真正聊天的时间：取末尾最后一条带时间的记录。
+            // 不用文件修改时间——退出 App 时 Claude 会往每个开着的对话末尾补写「花费」「最后一句」，所有文件的修改时间都会变成同一刻，列表顺序就乱了
+            if lastTalk == nil, let r = line.range(of: Data("\"timestamp\":\"".utf8)) {
+                let rest = line[r.upperBound...]
+                if let end = rest.firstIndex(of: UInt8(ascii: "\"")), let s = String(data: Data(rest[rest.startIndex..<end]), encoding: .utf8) {
+                    lastTalk = Self.isoFrac.date(from: s) ?? Self.iso.date(from: s)
+                }
+            }
             if line.count < 4000, tailTitle == nil, let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
                o["type"] as? String == "ai-title", let t = o["aiTitle"] as? String { tailTitle = t }
             // 只取末尾这段消息的 ID（不完整解析大行，用字符串查找）
@@ -185,7 +197,7 @@ enum History {
         if let tailTitle { aiTitle = tailTitle }
         guard let cwd, firstPrompt != nil || aiTitle != nil else { return nil }
         let title = aiTitle ?? ToolLabel.firstLine(firstPrompt ?? "")
-        return HistoryEntry(sessionId: ownId, url: url, cwd: cwd, title: title, modified: modified,
+        return HistoryEntry(sessionId: ownId, url: url, cwd: cwd, title: title, modified: min(lastTalk ?? modified, modified),
                             continuesFrom: foreign, orphanParent: orphan, tailUuids: tailUuids)
     }
 
