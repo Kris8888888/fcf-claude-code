@@ -119,6 +119,8 @@ final class AppState: ObservableObject {
         if let t = ProcessInfo.processInfo.environment["DUIHUATAI_AUTOSEND"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.current?.send(text: t, images: []) }
         }
+        // 插件自动更新：把插件市场都设成自动更新（开关在设置→插件）
+        PluginAutoUpdate.start()
         // 模型菜单：Claude Code 升级后读一次它认识的最新模型
         ModelCatalog.shared.refresh()
         // 桌面宠物：开着才启动，关着什么都不跑

@@ -62,6 +62,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         // 后台进程意外退出时写管道不能把整个 App 带崩
         signal(SIGPIPE, SIG_IGN)
+        // 仅用于测试：跑一次插件自动更新，打印结果后退出
+        if ProcessInfo.processInfo.environment["DUIHUATAI_TEST_PLUGIN_UPDATE"] != nil {
+            func out(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
+            for p in ConfigScan.plugins() { out("\(p.key)  能自动更新=\(PluginAutoUpdate.supported(p))") }
+            let before = PluginAutoUpdate.keys
+            PluginAutoUpdate.set("aise-plugin@cc-marketplace", true)      // 只为测试临时勾上（会马上检查这一个）
+            PluginAutoUpdate.runIfDue(force: true) {                       // 正在检查：等它跑完一起回
+                out("结果：" + PluginAutoUpdate.lastSummary)
+                UserDefaults.standard.set(Array(before), forKey: "pluginAutoUpdate.keys")   // 还原
+                UserDefaults.standard.removeObject(forKey: "pluginAutoUpdate.lastRun")
+                exit(0)
+            }
+            return
+        }
         // 仅用于测试：打印模型菜单会显示的版本后退出
         if ProcessInfo.processInfo.environment["DUIHUATAI_PRINT_MODELS"] != nil {
             UserDefaults.standard.removeObject(forKey: "modelScan.stamp")

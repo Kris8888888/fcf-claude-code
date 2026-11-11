@@ -424,6 +424,8 @@ struct PluginSettings: View {
     @State private var marketSrc = ""
     @State private var running = false
     @State private var log = ""
+    @State private var autoKeys = PluginAutoUpdate.keys
+    @State private var checking = false
 
     var body: some View {
         Form {
@@ -435,6 +437,11 @@ struct PluginSettings: View {
                             Text("\(p.marketplace) · \(p.version)").font(T.small).foregroundStyle(T.muted)
                         }
                         Spacer()
+                        if PluginAutoUpdate.supported(p) {
+                            Toggle("自动更新", isOn: Binding(get: { autoKeys.contains(p.key) },
+                                                         set: { PluginAutoUpdate.set(p.key, $0); autoKeys = PluginAutoUpdate.keys }))
+                                .toggleStyle(.checkbox).font(T.small)
+                        }
                         Menu {
                             Button("更新") { cli(["plugin", "update", p.key]) }
                             Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p.path)]) }
@@ -448,6 +455,18 @@ struct PluginSettings: View {
                             get: { file.value(["enabledPlugins", p.key]) as? Bool ?? false },
                             set: { file.set(["enabledPlugins", p.key], $0) }))
                             .toggleStyle(.switch).labelsHidden()
+                    }
+                }
+                if !autoKeys.isEmpty {
+                    HStack {
+                        Text(PluginAutoUpdate.lastRun.map { "自动更新：上次检查 " + $0.formatted(date: .abbreviated, time: .shortened) + "，" + PluginAutoUpdate.lastSummary } ?? "自动更新：还没检查过")
+                            .font(T.small).foregroundStyle(T.muted)
+                        Spacer()
+                        Button(checking ? "检查中…" : "现在检查") {
+                            checking = true
+                            PluginAutoUpdate.runIfDue(force: true) { checking = false; plugins = ConfigScan.plugins() }
+                        }
+                        .disabled(checking)
                     }
                 }
                 HStack {

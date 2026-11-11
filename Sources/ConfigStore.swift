@@ -230,6 +230,14 @@ enum ConfigScan {
         }.sorted { $0.key < $1.key }
     }
 
+    /// 市场的来源类型：github / git / url / directory / file
+    static func marketplaceSourceType(_ name: String) -> String? {
+        let url = URL(fileURLWithPath: home + "/plugins/known_marketplaces.json")
+        guard let d = try? Data(contentsOf: url), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let m = j[name] as? [String: Any], let src = m["source"] as? [String: Any] else { return nil }
+        return src["source"] as? String
+    }
+
     static func marketplaces() -> [(name: String, source: String)] {
         let url = URL(fileURLWithPath: home + "/plugins/known_marketplaces.json")
         guard let d = try? Data(contentsOf: url), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
@@ -285,6 +293,68 @@ enum MCPList {
             return MCPServer(name: String(line[..<sep.lowerBound]),
                              target: String(line[sep.upperBound..<dash.lowerBound]),
                              status: String(line[dash.upperBound...]))
+        }
+    }
+}
+
+/// 插件自动更新：每个插件自己勾选（默认不勾）。只有从 GitHub / git 仓库装的插件能检查新版本，本地文件夹装的不显示勾选框。
+/// 勾过的插件，客户端每天在后台跑一次「刷新它所在的市场 → 升级这个插件」
+enum PluginAutoUpdate {
+    private static let keysKey = "pluginAutoUpdate.keys"
+    static var keys: Set<String> { Set(UserDefaults.standard.stringArray(forKey: keysKey) ?? []) }
+    static func isOn(_ key: String) -> Bool { keys.contains(key) }
+    static func set(_ key: String, _ on: Bool) {
+        var k = keys
+        if on { k.insert(key) } else { k.remove(key) }
+        UserDefaults.standard.set(Array(k).sorted(), forKey: keysKey)
+        if on { runIfDue(force: true, only: [key]) }     // 刚勾上的马上检查一次
+    }
+
+    /// 插件所在的市场有远程来源（GitHub、git、网址）才能检查新版本
+    static func supported(_ p: PluginInfo) -> Bool {
+        guard let t = ConfigScan.marketplaceSourceType(p.marketplace) else { return false }
+        return ["github", "git", "url"].contains(t)
+    }
+
+    /// 上次检查的时间和结果，插件页显示
+    static var lastRun: Date? { UserDefaults.standard.object(forKey: "pluginAutoUpdate.lastRun") as? Date }
+    static var lastSummary: String { UserDefaults.standard.string(forKey: "pluginAutoUpdate.summary") ?? "" }
+    private static var running = false
+    private static var waiters: [() -> Void] = []     // 正在检查时又点了「现在检查」：等这一轮跑完一起回
+    private static var timer: Timer?
+
+    /// App 启动时调用：1 分钟后检查一次，之后每 6 小时看一眼，满 20 小时就跑
+    static func start() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { runIfDue() }
+        timer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in runIfDue() }
+    }
+
+    static func runIfDue(force: Bool = false, only: Set<String>? = nil, done: (() -> Void)? = nil) {
+        if running { if let done { waiters.append(done) }; return }
+        let targets = ConfigScan.plugins().filter { keys.contains($0.key) && supported($0) && (only?.contains($0.key) ?? true) }
+        guard !targets.isEmpty else { done?(); return }
+        if !force, let t = lastRun, Date().timeIntervalSince(t) < 20 * 3600 { done?(); return }
+        running = true
+        DispatchQueue.global(qos: .utility).async {
+            for m in Set(targets.map(\.marketplace)).sorted() { _ = Shell.claude(["plugin", "marketplace", "update", m]) }
+            var updated: [String] = []
+            for p in targets {
+                let r = Shell.claude(["plugin", "update", p.key, "-y"])
+                // 「Plugin "foder" updated from 2.0.172 to 2.0.187」
+                if let m = r.output.range(of: #"updated from \S+ to \S+"#, options: .regularExpression) {
+                    updated.append("\(p.name) " + r.output[m].replacingOccurrences(of: "updated from ", with: "").replacingOccurrences(of: " to ", with: " → "))
+                }
+            }
+            let summary = updated.isEmpty ? "都是最新版" : "升级了 " + updated.joined(separator: "、")
+            DispatchQueue.main.async {
+                running = false
+                UserDefaults.standard.set(Date(), forKey: "pluginAutoUpdate.lastRun")
+                UserDefaults.standard.set(summary, forKey: "pluginAutoUpdate.summary")
+                AppLog.write("插件自动更新：" + summary)
+                done?()
+                let w = waiters; waiters = []
+                w.forEach { $0() }
+            }
         }
     }
 }
