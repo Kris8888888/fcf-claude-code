@@ -177,8 +177,8 @@ struct GeneralSettings: View {
             Form {
                 Section("模型") {
                     TextPicker(label: "默认模型", value: f.value(["model"]) as? String ?? "",
-                               options: [""] + ModelChoice.allCases.dropFirst().map(\.rawValue) + ["opus", "sonnet", "haiku", "opusplan"],
-                               names: ["跟随默认"] + ModelChoice.allCases.dropFirst().map(\.label) + ["Opus（跟着 Claude Code 走最新版）", "Sonnet（跟着 Claude Code 走最新版）", "Haiku（跟着 Claude Code 走最新版）", "计划用 Opus、执行用 Sonnet"]) { f.set(["model"], $0.isEmpty ? nil : $0) }
+                               options: [""] + ModelChoice.allCases.dropFirst().map(\.modelId) + ["opusplan"],
+                               names: ["跟随默认"] + ModelChoice.allCases.dropFirst().map(\.label) + ["计划用 Opus、执行用 Sonnet"]) { f.set(["model"], $0.isEmpty ? nil : $0) }
                     StringRow(label: "回复语言", hint: "例如：简体中文。留空跟随默认", key: ["language"], file: f)
                     TextPicker(label: "输出风格", value: f.value(["outputStyle"]) as? String ?? "",
                                options: [""] + OutputStyles.all, names: ["默认"] + OutputStyles.all) { f.set(["outputStyle"], $0.isEmpty ? nil : $0) }

@@ -108,17 +108,12 @@ enum PermissionMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 输入框右下角的模型菜单。具体用哪个版本由 ModelCatalog 决定，自动跟最新
 enum ModelChoice: String, CaseIterable, Identifiable {
-    // 用完整模型名，菜单上写的版本就是实际用的版本（简称会随 Claude Code 升级指向别的版本）。2026-11 公司 FCF 实测可用
-    case inherit = "", fable = "claude-fable-5-2", opus = "claude-opus-5-5", sonnet = "claude-sonnet-5-5", haiku = "claude-haiku-5-5"
+    case inherit = "", fable, opus, sonnet, haiku
     var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .inherit: return "默认模型"
-        case .fable: return "Fable 5.2"
-        case .opus: return "Opus 5.5"
-        case .sonnet: return "Sonnet 5.5"
-        case .haiku: return "Haiku 5.5"
-        }
-    }
+    var family: ModelFamily? { ModelFamily(rawValue: rawValue) }
+    /// 传给 Claude 的完整模型名；空 = 用默认设置
+    var modelId: String { family.map { ModelCatalog.shared.id(for: $0) } ?? "" }
+    var label: String { family.map { ModelCatalog.shared.label(for: $0) } ?? "默认模型" }
 }

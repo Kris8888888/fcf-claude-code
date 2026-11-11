@@ -90,7 +90,7 @@ final class ChatSession: ObservableObject, Identifiable {
             // 用户手动选过模式才传参数，否则跟随各层 settings.json
             // 后台模式默认不返回思考内容，按「设置 → 思维链」决定要不要
             let disp = ThinkingPrefs.cliDisplay(cwd: cwd)
-            try p.start(cwd: cwd, resume: sessionId, model: model.rawValue,
+            try p.start(cwd: cwd, resume: sessionId, model: model.modelId,
                         permissionMode: modeExplicit ? mode.rawValue : nil, addDirs: extraDirs,
                         extraArgs: (disp.map { ["--thinking-display", $0] } ?? [])
                             + (contextNote.map { ["--append-system-prompt", $0] } ?? []))
@@ -359,7 +359,7 @@ final class ChatSession: ObservableObject, Identifiable {
 
     func setModel(_ m: ModelChoice) {
         model = m
-        if proc?.isRunning == true { control(["subtype": "set_model", "model": m.rawValue.isEmpty ? "default" : m.rawValue]) }
+        if proc?.isRunning == true { control(["subtype": "set_model", "model": m.modelId.isEmpty ? "default" : m.modelId]) }
     }
 
     func changeFolder(_ path: String) {
@@ -537,7 +537,12 @@ final class ChatSession: ObservableObject, Identifiable {
                 let isErr = (e["is_error"] as? Bool) == true
                 PetStore.shared.finishedTurn(self, tokens: food, ok: !isErr && !interrupted, error: isErr && !interrupted)
             }
-            if (e["is_error"] as? Bool) == true {
+            // 选的模型版本后台还没开通：记下来，自动退回能用的版本，提示再发一次
+            if (e["is_error"] as? Bool) == true, let bad = ModelCatalog.unavailableModel(in: (e["result"] as? String) ?? ""),
+               let back = ModelCatalog.shared.markUnavailable(bad) {
+                items.append(ChatItem(.notice, "\(ModelCatalog.pretty(bad)) 现在还用不了，已经换成 \(ModelCatalog.pretty(back))，再发一次就行。"))
+                if model != .inherit { setModel(model) }
+            } else if (e["is_error"] as? Bool) == true {
                 let r = (e["result"] as? String) ?? (e["subtype"] as? String ?? "出错了")
                 if LoginController.isAuthError(r) { showLoginCard() } else { items.append(ChatItem(.error, r)) }
             }

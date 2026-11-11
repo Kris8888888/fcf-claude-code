@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct Composer: View {
+    @ObservedObject private var catalog = ModelCatalog.shared   // 读到新模型时菜单跟着变
     @EnvironmentObject var app: AppState
     @ObservedObject var session: ChatSession
     @ObservedObject var draft: DraftState
@@ -152,15 +153,7 @@ struct Composer: View {
     var modelLabel: String {
         if session.model != .inherit { return session.model.label }
         if session.activeModel.isEmpty { return ModelChoice.inherit.label }
-        return Self.prettyModel(session.activeModel)
-    }
-
-    /// claude-opus-5-5 → Opus 5.5；claude-fable-5-2 → Fable 5.2
-    static func prettyModel(_ id: String) -> String {
-        let parts = id.replacingOccurrences(of: "claude-", with: "").split(separator: "-").map(String.init)
-        guard let name = parts.first else { return id }
-        let ver = parts.dropFirst().prefix { $0.count <= 2 && Int($0) != nil }
-        return name.capitalized + (ver.isEmpty ? "" : " " + ver.joined(separator: "."))
+        return ModelCatalog.pretty(session.activeModel)
     }
 
     var canSend: Bool {

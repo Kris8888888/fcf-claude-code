@@ -62,6 +62,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         // 后台进程意外退出时写管道不能把整个 App 带崩
         signal(SIGPIPE, SIG_IGN)
+        // 仅用于测试：打印模型菜单会显示的版本后退出
+        if ProcessInfo.processInfo.environment["DUIHUATAI_PRINT_MODELS"] != nil {
+            UserDefaults.standard.removeObject(forKey: "modelScan.stamp")
+            print("Claude Code 本体：", ModelCatalog.claudeBinary() ?? "没找到")
+            ModelCatalog.shared.refresh()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                for m in ModelChoice.allCases { print(m.label, "→", m.modelId.isEmpty ? "（默认设置）" : m.modelId) }
+                print("从本体读到：", ModelCatalog.shared.scanned.joined(separator: " "))
+                print("报错识别：", ModelCatalog.unavailableModel(in: "There's an issue with the selected model (claude-opus-5-9). It may not exist or you may not have access to it.") ?? "nil")
+                exit(0)
+            }
+            return
+        }
         // 仅用于测试：打印左侧历史列表的顺序后退出
         if ProcessInfo.processInfo.environment["DUIHUATAI_PRINT_HISTORY"] != nil {
             let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm"

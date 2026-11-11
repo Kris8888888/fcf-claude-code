@@ -119,6 +119,8 @@ final class AppState: ObservableObject {
         if let t = ProcessInfo.processInfo.environment["DUIHUATAI_AUTOSEND"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.current?.send(text: t, images: []) }
         }
+        // 模型菜单：Claude Code 升级后读一次它认识的最新模型
+        ModelCatalog.shared.refresh()
         // 桌面宠物：开着才启动，关着什么都不跑
         PetStore.shared.app = self
         DispatchQueue.main.async { PetStore.shared.startIfEnabled() }
@@ -254,6 +256,7 @@ final class AppState: ObservableObject {
         }
         let s = ChatSession(cwd: cwd ?? lastFolder)
         add(s)
+        ModelCatalog.shared.refresh()     // Claude Code 可能在后台升级了；没变就只看一眼文件时间
         return s
     }
 
