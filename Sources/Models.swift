@@ -109,16 +109,16 @@ enum PermissionMode: String, CaseIterable, Identifiable {
 }
 
 enum ModelChoice: String, CaseIterable, Identifiable {
-    // Fable 用完整模型名：Claude Code 自带的简称 fable 还指向 5.1
-    case inherit = "", fable = "claude-fable-5-2", opus, sonnet, haiku
+    // 用完整模型名，菜单上写的版本就是实际用的版本（简称会随 Claude Code 升级指向别的版本）。2026-11 公司 FCF 实测可用
+    case inherit = "", fable = "claude-fable-5-2", opus = "claude-opus-5-5", sonnet = "claude-sonnet-5-5", haiku = "claude-haiku-5-5"
     var id: String { rawValue }
     var label: String {
         switch self {
         case .inherit: return "默认模型"
         case .fable: return "Fable 5.2"
-        case .opus: return "Opus"
-        case .sonnet: return "Sonnet"
-        case .haiku: return "Haiku"
+        case .opus: return "Opus 5.5"
+        case .sonnet: return "Sonnet 5.5"
+        case .haiku: return "Haiku 5.5"
         }
     }
 }
