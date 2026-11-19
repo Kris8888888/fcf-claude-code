@@ -239,7 +239,11 @@ enum History {
     }
 
     /// 把会话记录还原成界面条目（只取最近 400 条，避免超长会话卡顿）
-    static func loadTranscript(_ url: URL) -> (items: [ChatItem], title: String?) {
+    /// 「更早的内容没有加载」那条提示的标记：界面上把它画成能点的按钮
+    static let loadEarlierMark = "load-earlier"
+
+    /// limit：长对话打开时只读最近这么多条（打开快）；nil = 全部读
+    static func loadTranscript(_ url: URL, limit: Int? = 400) -> (items: [ChatItem], title: String?) {
         // 内存映射读取：几十 MB 的记录文件不用整份复制进内存，系统按需读、用完可回收
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return ([], nil) }
         var items: [ChatItem] = []
@@ -332,9 +336,12 @@ enum History {
             }
         }
         flushArtifacts(until: nil)
-        if items.count > 400 {
-            items = Array(items.suffix(400))
-            items.insert(ChatItem(.notice, "更早的内容没有显示，对话本身是完整的。"), at: 0)
+        if let limit, items.count > limit {
+            let hidden = items.count - limit
+            items = Array(items.suffix(limit))
+            let n = ChatItem(.notice, "前面还有 \(hidden) 条较早的内容，点这里全部加载")
+            n.toolUseId = loadEarlierMark
+            items.insert(n, at: 0)
         }
         return (items, title)
     }

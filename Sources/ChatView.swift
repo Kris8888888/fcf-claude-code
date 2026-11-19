@@ -26,7 +26,7 @@ struct ChatView: View {
                 EmptyChat(session: session)
             } else {
                 VStack(spacing: 0) {
-                    Transcript(session: session)
+                    Transcript(session: session).id(session.historyRevision)
                     Composer(session: session)
                         .frame(maxWidth: 800)
                         .padding(.horizontal, 24).padding(.bottom, 16).padding(.top, 4)
@@ -479,6 +479,14 @@ struct ItemRow: View {
         case .tool: ToolRow(item: item)
         case .question: Rail(node: T.accent) { QuestionCard(item: item, session: session) }
         case .permission: Rail(node: T.accent) { PermissionCard(item: item, session: session) }
+        case .notice where item.toolUseId == History.loadEarlierMark:
+            Rail {
+                Button { session.loadFullHistory() } label: {
+                    Text(session.loading ? "正在加载…" : item.text).font(T.small).foregroundStyle(T.accent)
+                }
+                .buttonStyle(.plain).disabled(session.busy || session.loading)
+                .help(session.busy ? "等这一轮回答完再加载" : "把这个对话的全部内容读进来")
+            }
         case .notice:
             Rail {
                 Text(item.text).font(T.small).foregroundStyle(T.muted).textSelection(.enabled)

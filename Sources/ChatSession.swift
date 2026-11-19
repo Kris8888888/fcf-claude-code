@@ -755,7 +755,30 @@ final class ChatSession: ObservableObject, Identifiable {
 
     // MARK: 从历史记录恢复（后台解析，大文件不卡界面）
 
+    /// 从哪个记录文件读进来的（「全部加载」时重读它）
+    private(set) var historyURL: URL?
+    /// 换了一批内容（比如全部加载）：正文区据此重新排起点
+    @Published private(set) var historyRevision = 0
+
+    /// 长对话打开时只读了最近一段：现在把整个对话读进来
+    func loadFullHistory() {
+        guard let url = historyURL, !busy, !loading else { return }
+        loading = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let parsed = History.loadTranscript(url, limit: nil)
+            DispatchQueue.main.async {
+                self.loading = false
+                guard !self.busy else { return }
+                self.items = parsed.items
+                self.toolItems = [:]
+                for it in parsed.items where it.kind == .tool { self.toolItems[it.toolUseId] = it }
+                self.historyRevision += 1
+            }
+        }
+    }
+
     func loadHistory(from url: URL) {
+        historyURL = url
         loading = true
         DispatchQueue.global(qos: .userInitiated).async {
             let parsed = History.loadTranscript(url)

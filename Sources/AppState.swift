@@ -113,6 +113,19 @@ final class AppState: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 guard let self, let s = self.openRemote(id) else { return }
                 self.selected = s.id
+                // 仅用于测试：DUIHUATAI_TEST_LOADALL 打开后再点一次「全部加载」
+                if ProcessInfo.processInfo.environment["DUIHUATAI_TEST_LOADALL"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                        s.logContext("测试：点全部加载前")
+                        let t0 = Date()
+                        s.loadFullHistory()
+                        Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { tm in
+                            guard !s.loading else { return }
+                            tm.invalidate()
+                            s.logContext("测试：全部加载完，用时 \(String(format: "%.1f", Date().timeIntervalSince(t0))) 秒")
+                        }
+                    }
+                }
             }
         }
         // 仅用于测试：DUIHUATAI_AUTOSEND=文字，启动后自动在当前对话发一条（配合 -claudePath 假 claude）
