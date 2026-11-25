@@ -96,6 +96,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
         AppLog.start()
+        // 仅用于测试：DUIHUATAI_TEST_CLOSE 3 秒后关掉主窗口，再过 3 秒看 App 还在不在，然后正常退出
+        if ProcessInfo.processInfo.environment["DUIHUATAI_TEST_CLOSE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                NSApp.windows.filter { $0.canBecomeMain && !($0 is NSPanel) }.forEach { $0.performClose(nil) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    AppLog.write("测试：关窗 3 秒后 App 还在运行，窗口数 \(NSApp.windows.filter { $0.isVisible && $0.canBecomeMain }.count)")
+                }
+                // 这期间外面会模拟点一次程序坞图标
+                DispatchQueue.main.asyncAfter(deadline: .now() + 14) {
+                    AppLog.write("测试：点程序坞图标后，窗口数 \(NSApp.windows.filter { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }.count)")
+                    NSApp.terminate(nil)
+                }
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { n in
+            guard let w = n.object as? NSWindow, w.canBecomeMain, !(w is NSPanel) else { return }
+            let others = NSApp.windows.filter { $0 !== w && $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }.count
+            AppLog.write("关闭了窗口「\(w.title)」，还开着 \(others) 个窗口")
+        }
         // 仅用于测试：把宠物每个姿势画成图片后退出
         if let dir = ProcessInfo.processInfo.environment["DUIHUATAI_PET_SNAPSHOT"] { PetSnapshot.run(dir); exit(0) }
         ThemeStore.shared.applyAppearance()
@@ -104,7 +123,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 提前在后台取好登录环境，第一条消息不用等
         DispatchQueue.global().async { _ = LoginEnv.shared }
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    // 关掉主窗口不退出：正在回答的对话、微信、网页远程、宠物都还在跑；点程序坞图标把窗口找回来。只有 ⌘Q 才真退出
+    // （以前关窗即退出，按 ⌘W 或点红点就整个 App 没了，用户以为是「莫名其妙自动退出」）
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
+
+    /// 记下是谁让 App 退出的：按键、程序坞、还是别的程序发来的退出指令
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        var why = "原因不明"
+        if let ev = NSAppleEventManager.shared().currentAppleEvent {
+            let pid = ev.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value ?? 0
+            let who = NSRunningApplication(processIdentifier: pid)?.localizedName
+                ?? (pid > 0 ? Shell.run("/bin/ps", ["-o", "comm=", "-p", "\(pid)"]).output.trimmingCharacters(in: .whitespacesAndNewlines) : "")
+            why = pid == 0 ? "系统发来退出指令（关机、注销或重启）" : "\(who.isEmpty ? "进程 \(pid)" : who) 发来退出指令"
+        } else if let e = NSApp.currentEvent, e.type == .keyDown, e.modifierFlags.contains(.command) {
+            why = "按了 ⌘\(e.charactersIgnoringModifiers?.uppercased() ?? "")"
+        } else if let e = NSApp.currentEvent, e.type == .leftMouseUp || e.type == .leftMouseDown {
+            why = "点了菜单里的退出"
+        }
+        AppLog.write("要求退出：\(why)")
+        return .terminateNow
+    }
+
+    /// 窗口都关了、再点程序坞图标：把主窗口开回来（SwiftUI 默认会新开一个）
+    func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows flag: Bool) -> Bool { true }
     func applicationWillTerminate(_ n: Notification) {
         AppLog.write("退出")
         app?.shutdownAll()
