@@ -12,6 +12,10 @@ final class ChatSession: ObservableObject, Identifiable {
     @Published var loading = false
     @Published var status = ""
     @Published var model: ModelChoice = .inherit
+    /// 用哪家模型服务（nil = FCF）。新对话按设置里当前选的；进程起来以后就固定，换服务商只影响之后新开的对话
+    @Published var providerId: String? = ProviderStore.shared.currentId
+    /// 别家服务时选的模型（nil = 那家的主模型）
+    @Published var customModel: String?
     @Published var activeModel = ""
     @Published var mode: PermissionMode
     @Published var costUSD: Double = 0
@@ -90,10 +94,14 @@ final class ChatSession: ObservableObject, Identifiable {
             // 用户手动选过模式才传参数，否则跟随各层 settings.json
             // 后台模式默认不返回思考内容，按「设置 → 思维链」决定要不要
             let disp = ThinkingPrefs.cliDisplay(cwd: cwd)
-            try p.start(cwd: cwd, resume: sessionId, model: model.modelId,
+            let custom = providerId.flatMap { id in ProviderStore.shared.providers.first { $0.id == id } }
+            if providerId != nil && custom == nil { providerId = nil }      // 那家被删了：回到 FCF
+            let route = ProviderStore.shared.launch(for: providerId)
+            try p.start(cwd: cwd, resume: sessionId, model: custom != nil ? (customModel ?? "") : model.modelId,
                         permissionMode: modeExplicit ? mode.rawValue : nil, addDirs: extraDirs,
                         extraArgs: (disp.map { ["--thinking-display", $0] } ?? [])
-                            + (contextNote.map { ["--append-system-prompt", $0] } ?? []))
+                            + (contextNote.map { ["--append-system-prompt", $0] } ?? []),
+                        launch: custom != nil ? (route.exe, route.env) : nil)
             startedDisplay = disp
             proc = p
             started = true
@@ -355,6 +363,20 @@ final class ChatSession: ObservableObject, Identifiable {
     func leaveRemoteMode() {
         guard let m = modeBeforeRemote else { return }
         if mode == .default { setMode(m) } else { modeBeforeRemote = nil }
+    }
+
+    /// 别家服务时换模型（主模型 / 快速模型）
+    func setCustomModel(_ m: String?) {
+        customModel = m
+        let id = m ?? ProviderStore.shared.providers.first { $0.id == providerId }?.model ?? ""
+        if proc?.isRunning == true, !id.isEmpty { control(["subtype": "set_model", "model": id]) }
+    }
+
+    /// 还没开始的对话换服务商（进程起来以后就不换了）
+    func setProvider(_ id: String?) {
+        guard !started else { return }
+        providerId = id
+        customModel = nil
     }
 
     func setModel(_ m: ModelChoice) {

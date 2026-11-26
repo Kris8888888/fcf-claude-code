@@ -16,7 +16,8 @@ struct DuihuataiApp: App {
         WindowGroup {
             Themed {
                 // 仅用于测试：DUIHUATAI_SKIP_GATE 跳过启动检查（配合 -claudePath 假 claude）
-                if gate.phase == .passed || ProcessInfo.processInfo.environment["DUIHUATAI_SKIP_GATE"] != nil {
+                // 选了别家模型服务时不需要 FCF，启动检查不拦
+                if gate.phase == .passed || ProviderStore.shared.currentId != nil || ProcessInfo.processInfo.environment["DUIHUATAI_SKIP_GATE"] != nil {
                     RootView()
                 } else {
                     LaunchGateView(gate: gate)
@@ -96,6 +97,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
         AppLog.start()
+        // 仅用于测试：DUIHUATAI_TEST_CCS_IMPORT 试一次从 CC Switch 导入（配合 DUIHUATAI_TEST_PROVIDER，不落盘）后退出
+        if ProcessInfo.processInfo.environment["DUIHUATAI_TEST_CCS_IMPORT"] != nil {
+            let r = ProviderStore.shared.importFromCCSwitch()
+            FileHandle.standardError.write("\(r.note)\n".data(using: .utf8)!)
+            for p in ProviderStore.shared.providers { FileHandle.standardError.write("\(p.name) | \(p.baseURL) | 主 \(p.model) | 快 \(p.fast)\n".data(using: .utf8)!) }
+            exit(0)
+        }
+        // 仅用于测试：DUIHUATAI_SHOT_WINDOWS=目录，5 秒后把每个窗口的画面存成图片
+        if let dir = ProcessInfo.processInfo.environment["DUIHUATAI_SHOT_WINDOWS"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                for (i, w) in NSApp.windows.enumerated() where w.isVisible {
+                    guard let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { continue }
+                    v.cacheDisplay(in: v.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/win\(i).png"))
+                }
+            }
+        }
         // 仅用于测试：DUIHUATAI_TEST_CLOSE 3 秒后关掉主窗口，再过 3 秒看 App 还在不在，然后正常退出
         if ProcessInfo.processInfo.environment["DUIHUATAI_TEST_CLOSE"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {

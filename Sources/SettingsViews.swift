@@ -2,11 +2,12 @@ import SwiftUI
 import AppKit
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, thinking, weixin, web, pet, appearance, permissions, env, plugins, mcp, skills, agents, commands, hooks, memory, raw, diagnose, about
+    case general, providers, thinking, weixin, web, pet, appearance, permissions, env, plugins, mcp, skills, agents, commands, hooks, memory, raw, diagnose, about
     var id: String { rawValue }
     var label: String {
         switch self {
         case .general: return "通用"
+        case .providers: return "模型服务"
         case .thinking: return "思维链"
         case .weixin: return "微信 ClawBot"
         case .web: return "网页远程"
@@ -29,6 +30,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .providers: return "cpu"
         case .thinking: return "brain"
         case .weixin: return "message"
         case .web: return "globe"
@@ -88,6 +90,7 @@ struct SettingsRoot: View {
                 Group {
                     switch section {
                     case .general: GeneralSettings(project: project)
+                    case .providers: ProviderSettings()
                     case .thinking: ThinkingSettings(project: project)
                     case .weixin: WeixinSettings()
                     case .web: WebRemoteSettings()

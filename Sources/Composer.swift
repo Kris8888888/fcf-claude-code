@@ -3,6 +3,7 @@ import AppKit
 
 struct Composer: View {
     @ObservedObject private var catalog = ModelCatalog.shared   // 读到新模型时菜单跟着变
+    @ObservedObject private var providers = ProviderStore.shared
     @EnvironmentObject var app: AppState
     @ObservedObject var session: ChatSession
     @ObservedObject var draft: DraftState
@@ -129,9 +130,32 @@ struct Composer: View {
             }
 
             Menu {
-                ForEach(ModelChoice.allCases) { m in
-                    Button { session.setModel(m) } label: {
-                        if m == session.model { Label(m.label, systemImage: "checkmark") } else { Text(m.label) }
+                if let p = provider {
+                    // 别家服务：主模型 / 快速模型
+                    ForEach(Array(Set([p.model, p.fast])).sorted(), id: \.self) { m in
+                        Button { session.setCustomModel(m == p.model ? nil : m) } label: {
+                            if (session.customModel ?? p.model) == m { Label(m, systemImage: "checkmark") } else { Text(m) }
+                        }
+                    }
+                } else {
+                    ForEach(ModelChoice.allCases) { m in
+                        Button { session.setModel(m) } label: {
+                            if m == session.model { Label(m.label, systemImage: "checkmark") } else { Text(m.label) }
+                        }
+                    }
+                }
+                // 还没开始的对话可以换服务商；开始以后就固定了
+                if !session.started && !providers.providers.isEmpty {
+                    Divider()
+                    Menu("模型服务") {
+                        Button { session.setProvider(nil) } label: {
+                            if session.providerId == nil { Label("FCF（公司）", systemImage: "checkmark") } else { Text("FCF（公司）") }
+                        }
+                        ForEach(providers.providers) { p in
+                            Button { session.setProvider(p.id) } label: {
+                                if session.providerId == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) }
+                            }
+                        }
                     }
                 }
             } label: {
@@ -150,7 +174,10 @@ struct Composer: View {
         }
     }
 
+    private var provider: ModelProvider? { session.providerId.flatMap { id in providers.providers.first { $0.id == id } } }
+
     var modelLabel: String {
+        if let p = provider { return "\(p.name) · \(session.customModel ?? p.model)" }
         if session.model != .inherit { return session.model.label }
         if session.activeModel.isEmpty { return ModelChoice.inherit.label }
         return ModelCatalog.pretty(session.activeModel)

@@ -80,7 +80,9 @@ final class ClaudeProcess {
     var isRunning: Bool { proc?.isRunning ?? false }
     var pid: Int32? { proc?.processIdentifier }
 
-    func start(cwd: String, resume: String?, model: String?, permissionMode: String?, addDirs: [String] = [], extraArgs: [String] = []) throws {
+    /// launch：用哪个程序、带哪些环境变量启动（别家模型服务时由 ProviderStore 给；nil = 走 FCF）
+    func start(cwd: String, resume: String?, model: String?, permissionMode: String?, addDirs: [String] = [], extraArgs: [String] = [],
+               launch: (exe: String, env: [String: String])? = nil) throws {
         var args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json",
                     "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio"]
         // 回传确认：你在 Claude 忙时发的消息什么时候被收下，靠它判断还要不要继续转圈
@@ -94,10 +96,10 @@ final class ClaudeProcess {
         args += extraArgs
 
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: LoginEnv.claudePath)
+        p.executableURL = URL(fileURLWithPath: launch?.exe ?? LoginEnv.claudePath)
         p.arguments = args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        p.environment = LoginEnv.shared
+        p.environment = launch?.env ?? LoginEnv.shared
         let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
         p.standardInput = inPipe
         p.standardOutput = outPipe
