@@ -89,10 +89,16 @@ struct ProviderEditor: View {
     @State private var key = ""
     @State private var testing = false
     @State private var result: (ok: Bool, text: String)?
+    @State private var roles: [String: RoleMap] = [:]
+    @State private var models: [String] = []
+    @State private var fetching = false
 
     init(provider: ModelProvider, done: @escaping () -> Void) {
         _provider = State(initialValue: provider)
         _key = State(initialValue: ProviderStore.shared.key(for: provider.id) ?? "")
+        var r: [String: RoleMap] = [:]
+        for role in ModelRole.allCases { r[role.rawValue] = provider.role(role) }
+        _roles = State(initialValue: r)
         self.done = done
     }
 
@@ -100,14 +106,76 @@ struct ProviderEditor: View {
         !provider.name.trimmingCharacters(in: .whitespaces).isEmpty && provider.baseURL.hasPrefix("http") && !provider.model.isEmpty && !key.isEmpty
     }
 
+    /// 存回去的服务商（带上映射）
+    private var edited: ModelProvider {
+        var p = provider
+        p.name = p.name.trimmingCharacters(in: .whitespaces)
+        p.roles = roles
+        p.fastModel = ""
+        return p
+    }
+
+    private func binding(_ r: ModelRole, _ kp: WritableKeyPath<RoleMap, String>) -> Binding<String> {
+        Binding(get: { roles[r.rawValue]?[keyPath: kp] ?? "" }, set: { roles[r.rawValue, default: RoleMap()][keyPath: kp] = $0 })
+    }
+    private func oneM(_ r: ModelRole) -> Binding<Bool> {
+        Binding(get: { roles[r.rawValue]?.oneM ?? false }, set: { roles[r.rawValue, default: RoleMap()].oneM = $0 })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
-                TextField("名称", text: $provider.name)
-                TextField("接口地址", text: $provider.baseURL, prompt: Text("https://…/anthropic"))
-                SecureField("API Key", text: $key)
-                TextField("主模型", text: $provider.model, prompt: Text("这家的模型名"))
-                TextField("快速模型", text: $provider.fastModel, prompt: Text("可不填，同主模型"))
+                Section {
+                    TextField("名称", text: $provider.name)
+                    TextField("接口地址", text: $provider.baseURL, prompt: Text("https://…/anthropic"))
+                    SecureField("API Key", text: $key)
+                }
+                Section {
+                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                        GridRow {
+                            Text("模型角色"); Text("显示名称"); Text("实际请求模型"); Text("1M")
+                        }
+                        .font(T.small).foregroundStyle(T.muted)
+                        ForEach(ModelRole.allCases) { r in
+                            GridRow {
+                                Text(r.label).font(.system(size: fs(13))).frame(width: 72, alignment: .leading)
+                                if r == .subagent {
+                                    Text("不显示在模型菜单").font(T.small).foregroundStyle(T.muted).frame(maxWidth: .infinity, alignment: .leading)
+                                } else {
+                                    TextField("", text: binding(r, \.name), prompt: Text(provider.model.isEmpty ? "可不填" : "同实际模型")).labelsHidden()
+                                }
+                                modelField(binding(r, \.model), prompt: r == .subagent ? "可不填" : "空 = 用默认兜底模型")
+                                Toggle("", isOn: oneM(r)).labelsHidden().toggleStyle(.checkbox)
+                            }
+                        }
+                    }
+                    HStack {
+                        Text("默认兜底模型").font(.system(size: fs(13))).frame(width: 82, alignment: .leading)
+                        modelField($provider.model, prompt: "这家的模型名（必填）")
+                        Toggle("1M", isOn: Binding(get: { provider.defaultOneM ?? false }, set: { provider.defaultOneM = $0 ? true : nil })).toggleStyle(.checkbox)
+                    }
+                } header: {
+                    HStack {
+                        Text("模型映射")
+                        Spacer()
+                        Button("一键设置") {
+                            // Sonnet / Opus / Fable 用兜底模型，Haiku 用列表里看起来最快的（flash / mini / turbo / haiku），没有就同兜底
+                            let fast = models.first { m in ["flash", "mini", "turbo", "haiku", "lite"].contains { m.lowercased().contains($0) } } ?? provider.model
+                            for r in [ModelRole.sonnet, .opus, .fable] { roles[r.rawValue] = RoleMap(model: provider.model) }
+                            roles[ModelRole.haiku.rawValue] = RoleMap(model: fast)
+                        }
+                        .disabled(provider.model.isEmpty)
+                        Button(fetching ? "获取中…" : "获取模型列表") {
+                            fetching = true
+                            ProviderStore.shared.fetchModels(edited, key: key) { ids, err in
+                                fetching = false; models = ids
+                                if provider.model.isEmpty, let f = ids.first { provider.model = f }
+                                result = err.map { (false, $0) } ?? (true, "拿到 \(ids.count) 个模型，点模型名右边的箭头选")
+                            }
+                        }
+                        .disabled(fetching || !provider.baseURL.hasPrefix("http") || key.isEmpty)
+                    }
+                }
                 if let result {
                     Label(result.text, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(T.small).foregroundStyle(result.ok ? T.ok : T.err).fixedSize(horizontal: false, vertical: true)
@@ -117,7 +185,7 @@ struct ProviderEditor: View {
             HStack {
                 Button(testing ? "测试中…" : "测试连接") {
                     testing = true; result = nil
-                    ProviderStore.shared.test(provider, key: key) { ok, text in testing = false; result = (ok, text) }
+                    ProviderStore.shared.test(edited, key: key) { ok, text in testing = false; result = (ok, text) }
                 }
                 .disabled(testing || !canSave)
                 if !provider.website.isEmpty, let u = URL(string: provider.website) {
@@ -126,14 +194,26 @@ struct ProviderEditor: View {
                 Spacer()
                 Button("取消", action: done).keyboardShortcut(.cancelAction)
                 Button("保存") {
-                    provider.name = provider.name.trimmingCharacters(in: .whitespaces)
-                    ProviderStore.shared.upsert(provider, key: key)
+                    ProviderStore.shared.upsert(edited, key: key)
                     done()
                 }
                 .buttonStyle(PrimaryButton()).disabled(!canSave).keyboardShortcut(.defaultAction)
             }
             .padding(16)
         }
-        .frame(width: 460)
+        .frame(width: 640)
+    }
+
+    /// 模型名输入框：拿到模型列表后右边多一个下拉
+    private func modelField(_ text: Binding<String>, prompt: String) -> some View {
+        HStack(spacing: 4) {
+            TextField("", text: text, prompt: Text(prompt)).labelsHidden()
+            if !models.isEmpty {
+                Menu {
+                    ForEach(models, id: \.self) { m in Button(m) { text.wrappedValue = m } }
+                } label: { Image(systemName: "chevron.down") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }
+        }
     }
 }

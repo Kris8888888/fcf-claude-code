@@ -131,10 +131,15 @@ struct Composer: View {
 
             Menu {
                 if let p = provider {
-                    // 别家服务：主模型 / 快速模型
-                    ForEach(Array(Set([p.model, p.fast])).sorted(), id: \.self) { m in
-                        Button { session.setCustomModel(m == p.model ? nil : m) } label: {
-                            if (session.customModel ?? p.model) == m { Label(m, systemImage: "checkmark") } else { Text(m) }
+                    // 别家服务：按模型映射的角色列（选角色 = 让 Claude Code 按映射去请求那家的模型）
+                    Button { session.setCustomModel(nil) } label: {
+                        let t = "默认 · \(p.model)"
+                        if session.customModel == nil { Label(t, systemImage: "checkmark") } else { Text(t) }
+                    }
+                    ForEach([ModelRole.fable, .opus, .sonnet, .haiku]) { r in
+                        Button { session.setCustomModel(r.rawValue) } label: {
+                            let t = "\(r.label) · \(p.display(r))"
+                            if session.customModel == r.rawValue { Label(t, systemImage: "checkmark") } else { Text(t) }
                         }
                     }
                 } else {
@@ -177,7 +182,10 @@ struct Composer: View {
     private var provider: ModelProvider? { session.providerId.flatMap { id in providers.providers.first { $0.id == id } } }
 
     var modelLabel: String {
-        if let p = provider { return "\(p.name) · \(session.customModel ?? p.model)" }
+        if let p = provider {
+            let shown = session.customModel.flatMap { ModelRole(rawValue: $0) }.map { p.display($0) } ?? p.model
+            return "\(p.name) · \(shown)"
+        }
         if session.model != .inherit { return session.model.label }
         if session.activeModel.isEmpty { return ModelChoice.inherit.label }
         return ModelCatalog.pretty(session.activeModel)

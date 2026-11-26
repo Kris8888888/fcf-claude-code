@@ -368,6 +368,7 @@ final class ChatSession: ObservableObject, Identifiable {
     /// 别家服务时换模型（主模型 / 快速模型）
     func setCustomModel(_ m: String?) {
         customModel = m
+        // 角色名（opus / sonnet…）直接交给 Claude Code，它按模型映射换成那家的模型
         let id = m ?? ProviderStore.shared.providers.first { $0.id == providerId }?.model ?? ""
         if proc?.isRunning == true, !id.isEmpty { control(["subtype": "set_model", "model": id]) }
     }

@@ -102,8 +102,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["DUIHUATAI_TEST_CCS_IMPORT"] != nil {
             let r = ProviderStore.shared.importFromCCSwitch()
             FileHandle.standardError.write("\(r.note)\n".data(using: .utf8)!)
-            for p in ProviderStore.shared.providers { FileHandle.standardError.write("\(p.name) | \(p.baseURL) | 主 \(p.model) | 快 \(p.fast)\n".data(using: .utf8)!) }
-            exit(0)
+            for p in ProviderStore.shared.providers {
+                let line = "\(p.name) | \(p.baseURL) | 兜底 \(p.model) | " + ModelRole.allCases.map { "\($0.label)=\(p.actual($0))" }.joined(separator: " ") + "\n"
+                FileHandle.standardError.write(line.data(using: .utf8)!)
+            }
+            let env = ProviderStore.shared.launch(for: "test").env
+            for k in env.keys.sorted() where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_SUBAGENT") {
+                FileHandle.standardError.write("  \(k)=\(k.contains("TOKEN") ? "***" : env[k]!)\n".data(using: .utf8)!)
+            }
+            ProviderStore.shared.fetchModels(ProviderStore.shared.providers[0], key: "x") { ids, err in
+                FileHandle.standardError.write("模型列表：\(ids) \(err ?? "")\n".data(using: .utf8)!)
+                exit(0)
+            }
+            return
         }
         // 仅用于测试：DUIHUATAI_SHOT_WINDOWS=目录，5 秒后把每个窗口的画面存成图片
         if let dir = ProcessInfo.processInfo.environment["DUIHUATAI_SHOT_WINDOWS"] {

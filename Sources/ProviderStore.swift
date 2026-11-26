@@ -3,15 +3,53 @@ import Security
 
 /// 模型服务商（参照 CC Switch）：默认走 FCF；也可以换成别家提供 Anthropic 兼容接口的服务（DeepSeek、Kimi、智谱…）。
 /// 跟 CC Switch 不同：不改 ~/.claude/settings.json，只在客户端启动 Claude 时带上那家的地址和 Key，终端里的 Claude Code 不受影响
+/// 模型映射里的一个角色：Claude Code 里叫 Sonnet / Opus…，实际请求那家的哪个模型
+struct RoleMap: Codable, Hashable {
+    var name = ""      // 显示名称（空 = 用实际模型名）
+    var model = ""     // 实际请求模型（空 = 用默认兜底模型；子代理空 = 不单独指定）
+    var oneM = false   // 声明支持 1M 上下文（模型名后加 [1m]）
+}
+
+enum ModelRole: String, CaseIterable, Identifiable {
+    case sonnet, opus, fable, haiku, subagent
+    var id: String { rawValue }
+    var label: String { self == .subagent ? "Subagent" : rawValue.capitalized }
+    /// Claude Code 认的环境变量
+    var envModel: String { self == .subagent ? "CLAUDE_CODE_SUBAGENT_MODEL" : "ANTHROPIC_DEFAULT_\(rawValue.uppercased())_MODEL" }
+    var envName: String? { self == .subagent ? nil : "ANTHROPIC_DEFAULT_\(rawValue.uppercased())_MODEL_NAME" }
+}
+
 struct ModelProvider: Codable, Identifiable, Hashable {
     var id = UUID().uuidString
     var name: String
     var baseURL: String
-    var model: String          // 主模型
-    var fastModel: String = "" // 快速模型（Claude 干杂活用，空 = 同主模型）
+    var model: String          // 默认兜底模型
+    var fastModel: String = "" // 旧版的快速模型：没设映射时当 Haiku 用
     var website: String = ""
+    var roles: [String: RoleMap]? = nil
+    var defaultOneM: Bool? = nil
 
     var fast: String { fastModel.isEmpty ? model : fastModel }
+
+    /// 某个角色的映射；没设过就用默认（Haiku 用快速模型，其余用兜底模型，子代理不单独指定）
+    func role(_ r: ModelRole) -> RoleMap {
+        if let m = roles?[r.rawValue] { return m }
+        switch r {
+        case .haiku: return RoleMap(model: fast)
+        case .subagent: return RoleMap()
+        default: return RoleMap(model: model)
+        }
+    }
+    /// 实际发给那家的模型名（空 = 兜底模型），带 [1m]
+    func actual(_ r: ModelRole) -> String {
+        let m = role(r)
+        let id = m.model.isEmpty ? (r == .subagent ? "" : model) : m.model
+        return id.isEmpty ? "" : id + (m.oneM ? "[1m]" : "")
+    }
+    func display(_ r: ModelRole) -> String {
+        let m = role(r); let a = m.model.isEmpty ? model : m.model
+        return m.name.isEmpty ? a : m.name
+    }
 }
 
 final class ProviderStore: ObservableObject {
@@ -28,7 +66,8 @@ final class ProviderStore: ObservableObject {
 
     private init() {
         if let base = ProcessInfo.processInfo.environment["DUIHUATAI_TEST_PROVIDER"] {
-            providers = [ModelProvider(id: "test", name: "测试服务", baseURL: base, model: "fake-pro", fastModel: "fake-flash")]
+            providers = [ModelProvider(id: "test", name: "测试服务", baseURL: base, model: "fake-pro", fastModel: "fake-flash",
+                                       roles: ["opus": RoleMap(name: "大模型", model: "fake-opus", oneM: true), "haiku": RoleMap(model: "fake-flash")])]
             currentId = "test"
             return
         }
@@ -73,11 +112,14 @@ final class ProviderStore: ObservableObject {
         for k in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"] { env.removeValue(forKey: k) }
         env["ANTHROPIC_BASE_URL"] = p.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         env["ANTHROPIC_AUTH_TOKEN"] = key(for: p.id) ?? ""
-        env["ANTHROPIC_MODEL"] = p.model
-        env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = p.model
-        env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = p.model
-        env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = p.fast
-        env["ANTHROPIC_SMALL_FAST_MODEL"] = p.fast
+        env["ANTHROPIC_MODEL"] = p.model + ((p.defaultOneM ?? false) ? "[1m]" : "")
+        // 模型映射：Claude Code 里的 Sonnet / Opus / Fable / Haiku / 子代理 各自请求那家的哪个模型
+        for r in ModelRole.allCases {
+            let a = p.actual(r)
+            if !a.isEmpty { env[r.envModel] = a }
+            if let n = r.envName, !p.role(r).name.isEmpty { env[n] = p.role(r).name }
+        }
+        env["ANTHROPIC_SMALL_FAST_MODEL"] = p.actual(.haiku)
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"   // 不往 Anthropic 发统计
         env["API_TIMEOUT_MS"] = env["API_TIMEOUT_MS"] ?? "600000"
         return (bin, env, p.name)
@@ -109,6 +151,23 @@ final class ProviderStore: ObservableObject {
         }.resume()
     }
 
+    /// 获取模型列表：GET {地址}/v1/models
+    func fetchModels(_ p: ModelProvider, key: String, done: @escaping ([String], String?) -> Void) {
+        let base = p.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        guard let url = URL(string: base + "/v1/models") else { done([], "接口地址不对"); return }
+        var r = URLRequest(url: url, timeoutInterval: 20)
+        r.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        r.setValue(key, forHTTPHeaderField: "x-api-key")
+        r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        URLSession(configuration: .ephemeral).dataTask(with: r) { data, resp, err in
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let ids = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["data"] as? [[String: Any]])?
+                .compactMap { $0["id"] as? String }.sorted() ?? []
+            let msg: String? = err.map { "连不上：\($0.localizedDescription)" } ?? (ids.isEmpty ? "这家没返回模型列表（\(code)），直接手填模型名" : nil)
+            DispatchQueue.main.async { done(ids, msg) }
+        }.resume()
+    }
+
     // MARK: 模板和从 CC Switch 导入
 
     /// 常用几家的接口地址（模型名以各家文档为准，填好后点「测试连接」确认）
@@ -134,10 +193,20 @@ final class ProviderStore: ObservableObject {
                   let cfg = try? JSONSerialization.jsonObject(with: Data(cfgS.utf8)) as? [String: Any],
                   let env = cfg["env"] as? [String: Any], let base = env["ANTHROPIC_BASE_URL"] as? String, !base.isEmpty,
                   !providers.contains(where: { $0.name == name }) else { continue }
-            let model = (env["ANTHROPIC_MODEL"] as? String) ?? (env["ANTHROPIC_DEFAULT_SONNET_MODEL"] as? String) ?? ""
-            let fast = (env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] as? String) ?? (env["ANTHROPIC_SMALL_FAST_MODEL"] as? String) ?? ""
+            func split(_ v: Any?) -> (String, Bool) {
+                let s = (v as? String) ?? ""
+                return s.hasSuffix("[1m]") ? (String(s.dropLast(4)), true) : (s, false)
+            }
+            let (model, model1M) = split(env["ANTHROPIC_MODEL"] ?? env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+            var roles: [String: RoleMap] = [:]
+            for r in ModelRole.allCases {
+                let (m, one) = split(env[r.envModel])
+                let n = r.envName.flatMap { env[$0] as? String } ?? ""
+                if !m.isEmpty || !n.isEmpty { roles[r.rawValue] = RoleMap(name: n, model: m, oneM: one) }
+            }
             let key = (env["ANTHROPIC_AUTH_TOKEN"] as? String) ?? (env["ANTHROPIC_API_KEY"] as? String) ?? ""
-            upsert(ModelProvider(name: name, baseURL: base, model: model, fastModel: fast == model ? "" : fast, website: row["website_url"] as? String ?? ""),
+            upsert(ModelProvider(name: name, baseURL: base, model: model, website: row["website_url"] as? String ?? "",
+                                 roles: roles.isEmpty ? nil : roles, defaultOneM: model1M ? true : nil),
                    key: key.isEmpty ? nil : key)
             n += 1
         }

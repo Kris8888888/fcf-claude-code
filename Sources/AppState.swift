@@ -130,7 +130,11 @@ final class AppState: ObservableObject {
         }
         // 仅用于测试：DUIHUATAI_AUTOSEND=文字，启动后自动在当前对话发一条（配合 -claudePath 假 claude）
         if let t = ProcessInfo.processInfo.environment["DUIHUATAI_AUTOSEND"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.current?.send(text: t, images: []) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                // 仅用于测试：DUIHUATAI_TEST_ROLE=opus 先在模型菜单里选这个角色
+                if let role = ProcessInfo.processInfo.environment["DUIHUATAI_TEST_ROLE"] { self?.current?.setCustomModel(role) }
+                self?.current?.send(text: t, images: [])
+            }
         }
         // 插件自动更新：把插件市场都设成自动更新（开关在设置→插件）
         PluginAutoUpdate.start()
