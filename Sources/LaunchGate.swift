@@ -202,6 +202,11 @@ final class LaunchGate: ObservableObject {
 struct LaunchGateView: View {
     @ObservedObject var gate: LaunchGate
     @State private var command = ""
+    @Environment(\.openSettings) private var openSettingsAction
+    private func openSettings(_ page: SettingsSection) {
+        UserDefaults.standard.set(page.rawValue, forKey: "settingsSection")
+        openSettingsAction()
+    }
     @State private var cols = 96
     @FocusState private var inputFocused: Bool
 
@@ -221,7 +226,13 @@ struct LaunchGateView: View {
                 default: EmptyView()
                 }
                 if gate.phase != .checking && gate.phase != .ready && !gate.running {
-                    Button("重新检查") { gate.runChecks() }.buttonStyle(.link).font(.system(size: fs(13)))
+                    HStack(spacing: 18) {
+                        Button("重新检查") { gate.runChecks() }.buttonStyle(.link).font(.system(size: fs(13)))
+                        // 没装 FCF 的电脑：去设置里选别家模型服务，选好就直接进对话界面
+                        if gate.phase == .needsSetup {
+                            Button("不用 FCF，改用其他模型服务") { openSettings(.providers) }.buttonStyle(.link).font(.system(size: fs(13)))
+                        }
+                    }
                 }
                 if gate.showTerminal { terminal.id("terminal") }
             }

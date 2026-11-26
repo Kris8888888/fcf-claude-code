@@ -6,6 +6,7 @@ struct DuihuataiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var app = AppState()
     @StateObject private var gate = LaunchGate()
+    @ObservedObject private var providers = ProviderStore.shared   // 选了别家模型服务：启动检查马上放行
 
     init() {
         // 不恢复上次的窗口状态：上次关窗退出后，系统会记成「没有窗口」，导致再打开时一个窗口都没有
@@ -17,7 +18,7 @@ struct DuihuataiApp: App {
             Themed {
                 // 仅用于测试：DUIHUATAI_SKIP_GATE 跳过启动检查（配合 -claudePath 假 claude）
                 // 选了别家模型服务时不需要 FCF，启动检查不拦
-                if gate.phase == .passed || ProviderStore.shared.currentId != nil || ProcessInfo.processInfo.environment["DUIHUATAI_SKIP_GATE"] != nil {
+                if gate.phase == .passed || providers.currentId != nil || ProcessInfo.processInfo.environment["DUIHUATAI_SKIP_GATE"] != nil {
                     RootView()
                 } else {
                     LaunchGateView(gate: gate)
@@ -112,6 +113,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { continue }
                     v.cacheDisplay(in: v.bounds, to: rep)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/win\(i).png"))
+                    // 有的窗口内容在图层里，上面那种画不出来：再按图层画一份
+                    if let layer = v.layer, let ctx = CGContext(data: nil, width: Int(v.bounds.width * 2), height: Int(v.bounds.height * 2), bitsPerComponent: 8, bytesPerRow: 0,
+                                                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                        ctx.scaleBy(x: 2, y: 2)
+                        layer.render(in: ctx)
+                        if let img = ctx.makeImage() {
+                            try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/win\(i)-layer.png"))
+                        }
+                    }
                 }
             }
         }

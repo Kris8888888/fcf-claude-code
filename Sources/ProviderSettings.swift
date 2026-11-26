@@ -35,7 +35,13 @@ struct ProviderSettings: View {
                     if !importNote.isEmpty { Text(importNote).font(T.small).foregroundStyle(T.muted) }
                 }
             } footer: {
-                Text("选中的服务商用于之后新开的对话，已经开始的对话不变。用别家服务时不经过 FCF，对话内容会直接发给那家。")
+                VStack(alignment: .leading, spacing: 6) {
+                    if !store.providers.isEmpty && ModelCatalog.claudeBinary() == nil {
+                        Text("这台电脑还没装 Claude Code，用别家服务也需要它。先在终端里运行 npm install -g @anthropic-ai/claude-code，装好后重开 App。")
+                            .foregroundStyle(T.err)
+                    }
+                    Text("选中的服务商用于之后新开的对话，已经开始的对话不变。用别家服务时不经过 FCF，对话内容会直接发给那家。")
+                }
             }
         }
         .formStyle(.grouped)
