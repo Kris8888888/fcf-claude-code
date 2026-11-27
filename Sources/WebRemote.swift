@@ -27,6 +27,7 @@ final class WebRemote: ObservableObject {
     private let queue = DispatchQueue(label: "webremote")
     private var tokens = Set<String>()
     private var failures: [String: (count: Int, until: Date)] = [:]
+    private var totalFailures = 0
     private var streams: [ObjectIdentifier: NWConnection] = [:]
     private var pollTimer: Timer?
     private var lastSigs: [String: Int] = [:]
@@ -300,19 +301,34 @@ final class WebRemote: ObservableObject {
 
     private func login(_ r: Request, _ c: NWConnection) {
         let who = r.remote
+        // 防猜码：同一来源每错 5 次锁一段时间，越锁越久（1、2、4…分钟，最长 1 小时）；
+        // 所有来源合计错 20 次起每 20 次提醒你一次。外网来的都算同一个来源（经中转进来），换 IP 也绕不开
         if let f = failures[who], f.until > Date() {
-            json(c, ["error": "输错太多次，请 1 分钟后再试"], status: "429 Too Many Requests"); return
+            let m = Int(ceil(f.until.timeIntervalSinceNow / 60))
+            json(c, ["error": "输错太多次，请 \(m) 分钟后再试"], status: "429 Too Many Requests"); return
         }
         let given = (r.json["code"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         let current = DispatchQueue.main.sync { code }
         guard given == current else {
             var f = failures[who] ?? (0, .distantPast)
             f.count += 1
-            if f.count >= 5 { f = (0, Date().addingTimeInterval(60)) }
+            if f.count % 5 == 0 {
+                let mins = min(60.0, pow(2.0, Double(f.count / 5 - 1)))
+                f.until = Date().addingTimeInterval(mins * 60)
+            }
             failures[who] = f
+            totalFailures += 1
+            if totalFailures % 20 == 0 {
+                let n = totalFailures, relay = Self.isRelay(c)
+                DispatchQueue.main.async {
+                    Notifier.shared.remind(title: "有人在反复试网页远程的访问码", body: "已经输错 \(n) 次\(relay ? "（从外网）" : "（从公司内网）")。不是你的话，到设置 → 网页远程换一个访问码\(relay ? "和网址口令" : "")。")
+                    if relay, WeixinBridge.shared.account != nil { WeixinBridge.shared.reply("【提醒】网页远程的访问码已被从外网输错 \(n) 次。不是你的话，回电脑上换访问码和网址口令。") }
+                }
+            }
             json(c, ["error": "访问码不对"], status: "403 Forbidden"); return
         }
         failures[who] = nil
+        totalFailures = 0
         let t = UUID().uuidString + UUID().uuidString
         tokens.insert(t)
         let viaRelay = Self.isRelay(c)
