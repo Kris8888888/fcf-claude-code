@@ -43,6 +43,12 @@ struct WebRemoteSettings: View {
                         Button("换一个") { confirmRegenerate() }
                     }
                     LabeledContent("正在看的浏览器") { Text(web.clients == 0 ? "没有" : "\(web.clients) 个").foregroundStyle(T.muted) }
+                    LabeledContent("已登录的浏览器") {
+                        HStack {
+                            Text(loginSummary).foregroundStyle(T.muted)
+                            Button("全部退出") { web.kickAll() }.disabled(web.logins.isEmpty)
+                        }
+                    }
                 } header: {
                     Text("访问码")
                 } footer: {
@@ -65,6 +71,13 @@ struct WebRemoteSettings: View {
                 TextField("", text: $relay.host, prompt: Text("公网 IP 或域名"))
                     .textFieldStyle(.roundedBorder).frame(width: 200)
                     .onSubmit { relay.reconnect() }
+            }
+            Picker("没人用时自动关闭", selection: $relay.autoOffHours) {
+                Text("1 小时后").tag(1)
+                Text("4 小时后").tag(4)
+                Text("8 小时后").tag(8)
+                Text("24 小时后").tag(24)
+                Text("不自动关闭").tag(0)
             }
             LabeledContent("端口") {
                 HStack(spacing: 6) {
@@ -101,6 +114,9 @@ struct WebRemoteSettings: View {
                 }
             }
             HStack {
+                Button("导出证书…") { exportCert() }
+                    .disabled(!relay.enabled)
+                    .help("在你的手机、电脑上信任一次，以后浏览器就不会再提示不安全；哪天又提示了，说明有人在冒充")
                 Button(copied == "script" ? "已复制" : "复制服务器安装命令") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(relay.serverScript(), forType: .string)
@@ -114,6 +130,31 @@ struct WebRemoteSettings: View {
         } footer: {
             Text("第一次用：在云服务器的防火墙里放行上面两个 TCP 端口，再把安装命令粘到服务器上以 root 执行（阿里云在控制台「命令助手」里）。浏览器第一次打开会提示证书不受信任，选继续访问即可。Claude 仍在这台电脑上运行。")
         }
+    }
+
+    private var loginSummary: String {
+        guard !web.logins.isEmpty else { return "没有" }
+        let outside = web.logins.values.filter(\.viaRelay).count
+        let last = web.logins.values.map(\.at).max()!.formatted(date: .abbreviated, time: .shortened)
+        return "\(web.logins.count) 个" + (outside > 0 ? "（外网 \(outside) 个）" : "") + "，最近 \(last)"
+    }
+
+    private func exportCert() {
+        guard let url = RelayTLS.export() else {
+            let a = NSAlert(); a.messageText = "还没有证书"; a.informativeText = "先打开「从外网访问」，证书会自动生成。"; a.runModal(); return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        let a = NSAlert()
+        a.messageText = "证书已放到「下载」文件夹"
+        a.informativeText = """
+        在你自己的设备上信任一次，以后打开外网网址就不会再提示「不安全」：
+
+        Mac：双击证书 → 钥匙串访问里双击它 → 展开「信任」→「使用此证书时」选「始终信任」。
+        iPhone：用 AirDrop 或微信传到手机并打开 → 设置里点「已下载描述文件」安装 → 设置 → 通用 → 关于本机 → 证书信任设置，打开它。
+
+        换了服务器地址后证书会重新生成，要再导出信任一次。
+        """
+        a.runModal()
     }
 
     private func confirmNewSecret() {

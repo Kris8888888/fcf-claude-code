@@ -123,6 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             r.host = p[0]; r.ctrlPort = Int(p[1]) ?? 21118; r.publicPort = Int(p[2]) ?? 8443
             r.setEnabled(true)
             FileHandle.standardError.write("SECRET=\(r.secret)\nCODE=\(WebRemote.shared.code)\n".data(using: .utf8)!)
+            // 仅用于测试：DUIHUATAI_TEST_KICK=秒 到点让所有浏览器退出
+            if let s = ProcessInfo.processInfo.environment["DUIHUATAI_TEST_KICK"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + s) { WebRemote.shared.kickAll() }
+            }
         }
         // 仅用于测试：DUIHUATAI_SHOT_WINDOWS=目录，5 秒后把每个窗口的画面存成图片
         if let dir = ProcessInfo.processInfo.environment["DUIHUATAI_SHOT_WINDOWS"] {

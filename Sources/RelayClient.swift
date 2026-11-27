@@ -43,11 +43,19 @@ final class RelayClient: ObservableObject {
     private var backoff: Double = 2
     private var lastPing = Date()
     private var watchdog: Timer?
+    private var idleTimer: Timer?
+    private var enabledAt = Date()
+
+    /// 没人用多久后自动关掉外网访问（小时；0 = 不自动关）
+    @Published var autoOffHours: Int {
+        didSet { UserDefaults.standard.set(autoOffHours, forKey: "relayAutoOffHours") }
+    }
 
     private init() {
         host = UserDefaults.standard.string(forKey: "relayHost") ?? ""
         ctrlPort = (UserDefaults.standard.object(forKey: "relayCtrlPort") as? Int) ?? Self.defaultCtrlPort
         publicPort = (UserDefaults.standard.object(forKey: "relayPublicPort") as? Int) ?? Self.defaultPublicPort
+        autoOffHours = (UserDefaults.standard.object(forKey: "relayAutoOffHours") as? Int) ?? 8
     }
 
     var publicURL: String? {
@@ -60,22 +68,41 @@ final class RelayClient: ObservableObject {
         if on {
             _ = token; _ = secret          // 先在主线程读好，后台线程直接用
             if !WebRemote.shared.enabled { WebRemote.shared.setEnabled(true) }
-            WebRemote.shared.startRelayEntrance()
+            WebRemote.shared.startRelayEntrance(host: host)
+            enabledAt = Date()
             connect()
+            startIdleCheck()
         } else {
             disconnect()
+            idleTimer?.invalidate(); idleTimer = nil
             WebRemote.shared.stopRelayEntrance()
         }
     }
 
     func startIfEnabled() { if enabled { setEnabled(true) } }
 
-    /// 改了服务器地址或端口：开着的话重新连
+    /// 改了服务器地址或端口：开着的话重新连（证书按新地址重新生成）
     func reconnect() {
         guard enabled else { return }
         backoff = 2
         disconnect()
+        WebRemote.shared.stopRelayEntrance()
+        WebRemote.shared.startRelayEntrance(host: host)
         connect()
+    }
+
+    /// 每 5 分钟看一眼：超过设定时间没人用（没有浏览器开着、也没有新的访问），自动关掉
+    private func startIdleCheck() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            guard let self, self.enabled, self.autoOffHours > 0 else { return }
+            if WebRemote.shared.clients > 0 { return }
+            let last = max(self.enabledAt, WebRemote.shared.lastRelayActivity)
+            guard Date().timeIntervalSince(last) > Double(self.autoOffHours) * 3600 else { return }
+            self.setEnabled(false)
+            AppLog.write("外网访问：\(self.autoOffHours) 小时没人用，自动关闭")
+            Notifier.shared.remind(title: "外网访问已自动关闭", body: "已经 \(self.autoOffHours) 小时没人用了。要用时在设置 → 网页远程里再打开。")
+        }
     }
 
     /// 换一个网址口令：已经存的网址都失效
@@ -266,15 +293,25 @@ enum RelayTLS {
         return d
     }
 
-    static func identity() -> sec_identity_t? {
+    static var certFile: URL { dir.appendingPathComponent("cert.pem") }
+
+    /// host：云服务器的 IP 或域名，写进证书（不写的话，就算信任了证书 Chrome 也会报错）。换了地址就重新生成
+    static func identity(host: String) -> sec_identity_t? {
         let p12 = dir.appendingPathComponent("id.p12")
+        let mark = dir.appendingPathComponent("host.txt")
+        let h = host.trimmingCharacters(in: .whitespaces)
+        if (try? String(contentsOf: mark, encoding: .utf8)) != h { try? FileManager.default.removeItem(at: p12) }
         if !FileManager.default.fileExists(atPath: p12.path) {
-            let key = dir.appendingPathComponent("key.pem").path, cert = dir.appendingPathComponent("cert.pem").path
-            let a = Shell.run("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "3650", "-subj", "/CN=FCF Claude Code"])
+            let key = dir.appendingPathComponent("key.pem").path, cert = certFile.path
+            let isIP = h.split(separator: ".").count == 4 && h.allSatisfy { $0.isNumber || $0 == "." }
+            let san = h.isEmpty ? "DNS:localhost" : (isIP ? "IP:\(h)" : "DNS:\(h)")
+            let a = Shell.run("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "825",
+                                                   "-subj", "/CN=FCF Claude Code \(h)", "-addext", "subjectAltName=\(san)"])
             guard a.code == 0 else { AppLog.write("生成证书失败：\(a.output.prefix(200))"); return nil }
             let b = Shell.run("/usr/bin/openssl", ["pkcs12", "-export", "-inkey", key, "-in", cert, "-out", p12.path, "-passout", "pass:\(pass)"])
             try? FileManager.default.removeItem(atPath: key)
             guard b.code == 0 else { AppLog.write("打包证书失败：\(b.output.prefix(200))"); return nil }
+            try? h.write(to: mark, atomically: true, encoding: .utf8)
         }
         guard let data = try? Data(contentsOf: p12) else { return nil }
         var items: CFArray?
@@ -282,5 +319,14 @@ enum RelayTLS {
         guard st == errSecSuccess, let arr = items as? [[String: Any]], let first = arr.first,
               let idRef = first[kSecImportItemIdentity as String] else { AppLog.write("读取证书失败：\(st)"); return nil }
         return sec_identity_create(idRef as! SecIdentity)
+    }
+
+    /// 导出证书（DER 格式 .cer，Mac 和 iPhone 都认），放到「下载」文件夹
+    static func export() -> URL? {
+        guard FileManager.default.fileExists(atPath: certFile.path) else { return nil }
+        let out = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0].appendingPathComponent("FCF网页远程证书.cer")
+        try? FileManager.default.removeItem(at: out)
+        let r = Shell.run("/usr/bin/openssl", ["x509", "-in", certFile.path, "-outform", "der", "-out", out.path])
+        return r.code == 0 ? out : nil
     }
 }

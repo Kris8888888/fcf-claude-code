@@ -39,11 +39,31 @@ final class WebRemote: ObservableObject {
 
     static func newCode() -> String { String(format: "%06d", Int.random(in: 0...999_999)) }
 
+    /// 有新的浏览器登录：系统通知 + 微信（绑过且最近聊过时）+ 日志
+    private func noteLogin(_ t: String, viaRelay: Bool, from: String) {
+        logins[t] = (Date(), viaRelay, from)
+        let time = Date().formatted(date: .omitted, time: .shortened)
+        let body = viaRelay ? "\(time) 从外网（经云服务器）登录。不是你的话，去设置 → 网页远程点「全部退出」并换访问码。"
+                            : "\(time) 从局域网 \(from) 登录。"
+        Notifier.shared.remind(title: "网页远程有新的浏览器登录", body: body)
+        if viaRelay, WeixinBridge.shared.account != nil { WeixinBridge.shared.reply("【提醒】网页远程有新的浏览器从外网登录（\(time)）。不是你的话，回电脑上的设置 → 网页远程点「全部退出」。") }
+        AppLog.write("网页远程新登录：\(viaRelay ? "外网" : "局域网 \(from)")")
+    }
+
+    /// 让所有已登录的浏览器退出（要重新输访问码）
+    func kickAll() {
+        queue.async { self.tokens.removeAll() }
+        logins.removeAll()
+        broadcast("logout")
+        AppLog.write("网页远程：全部浏览器已退出")
+    }
+
     /// 换一个访问码：已经登录的浏览器都要重新输入
     func regenerateCode() {
         code = Self.newCode()
         UserDefaults.standard.set(code, forKey: "webRemoteCode")
         queue.async { self.tokens.removeAll() }
+        logins.removeAll()
         broadcast("logout")
     }
 
@@ -145,9 +165,14 @@ final class WebRemote: ObservableObject {
 
     // MARK: 外网入口（经云服务器）
 
-    func startRelayEntrance() {
+    /// 外网最近一次有访问的时间（自动关闭用）
+    private(set) var lastRelayActivity = Date.distantPast
+    /// 已登录的浏览器：通行证 -> 登录时间、是不是外网
+    @Published private(set) var logins: [String: (at: Date, viaRelay: Bool, from: String)] = [:]
+
+    func startRelayEntrance(host: String) {
         guard relayListener == nil else { return }
-        guard let identity = RelayTLS.identity() else { error = "外网访问：生成加密证书失败"; return }
+        guard let identity = RelayTLS.identity(host: host) else { error = "外网访问：生成加密证书失败"; return }
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, identity)
         let params = NWParameters(tls: tls, tcp: .init())
@@ -242,7 +267,10 @@ final class WebRemote: ObservableObject {
     }
 
     private func route(_ r: Request, _ c: NWConnection) {
-        if Self.isRelay(c), !relayGate(r, c) { return }
+        if Self.isRelay(c) {
+            DispatchQueue.main.async { self.lastRelayActivity = Date() }
+            if !relayGate(r, c) { return }
+        }
         if r.method == "GET" && (r.path == "/" || r.path == "/index.html") {
             send(c, "200 OK", "text/html; charset=utf-8", Data(WebRemotePage.html.utf8)); return
         }
@@ -275,6 +303,8 @@ final class WebRemote: ObservableObject {
         failures[who] = nil
         let t = UUID().uuidString + UUID().uuidString
         tokens.insert(t)
+        let viaRelay = Self.isRelay(c)
+        DispatchQueue.main.async { self.noteLogin(t, viaRelay: viaRelay, from: who) }
         json(c, ["ok": true], extra: ["Set-Cookie: fcfrc=\(t); Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000"])
     }
 
