@@ -120,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let t = ProcessInfo.processInfo.environment["DUIHUATAI_TEST_RELAY"] {
             let p = t.split(separator: ":").map(String.init)
             let r = RelayClient.shared
-            r.host = p[0]; r.ctrlPort = Int(p[1]) ?? 21118; r.publicPort = Int(p[2]) ?? 8443
+            r.host = p[0]; r.ctrlPort = Int(p[1]) ?? RelayClient.defaultCtrlPort; r.publicPort = Int(p[2]) ?? 8443
             r.setEnabled(true)
             FileHandle.standardError.write("SECRET=\(r.secret)\nCODE=\(WebRemote.shared.code)\n".data(using: .utf8)!)
             // 仅用于测试：DUIHUATAI_TEST_KICK=秒 到点让所有浏览器退出

@@ -8,7 +8,7 @@ enum RelayServerScript {
 import asyncio, hmac, hashlib, os, secrets
 
 TOKEN = os.environ["RELAY_TOKEN"].encode()
-CTRL_PORT = int(os.environ.get("RELAY_CTRL_PORT", "21118"))
+CTRL_PORT = int(os.environ.get("RELAY_CTRL_PORT", "21128"))
 PUB_PORT = int(os.environ.get("RELAY_PUBLIC_PORT", "8443"))
 
 ctrl = None            # 电脑那头的控制连接
@@ -116,6 +116,14 @@ asyncio.run(main())
     static func make(token: String, ctrlPort: Int, publicPort: Int) -> String {
         """
         set -e
+        # 端口被别的程序占着（常见是 RustDesk 服务端占 21114–21119）就先停下，说清楚
+        systemctl stop cc-relay 2>/dev/null || true
+        for p in \(ctrlPort) \(publicPort); do
+          if ss -ltnH "sport = :$p" | grep -q .; then
+            echo "端口 $p 已经被这个程序占用："; ss -ltnpH "sport = :$p"
+            echo "请在客户端里把端口改成别的数字（比如 21128、8444），重新复制安装命令再执行。"; exit 1
+          fi
+        done
         mkdir -p /opt/cc-relay
         cat > /opt/cc-relay/relay.py <<'PYEOF'
         \(relayPy)

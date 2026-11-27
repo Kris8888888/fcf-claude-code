@@ -12,7 +12,7 @@ import Security
 final class RelayClient: ObservableObject {
     static let shared = RelayClient()
     /// 端口都能在设置里改（每个人的服务器不一样）；默认值只是建议
-    static let defaultCtrlPort = 21118
+    static let defaultCtrlPort = 21128   // 避开 RustDesk 服务端占用的 21114–21119
     static let defaultPublicPort = 8443
 
     enum State: Equatable { case off, connecting, connected, failed(String) }
