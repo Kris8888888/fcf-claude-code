@@ -1,5 +1,7 @@
 import Foundation
 import Network
+import CryptoKit
+import UniformTypeIdentifiers
 import AppKit
 import Combine
 
@@ -10,7 +12,8 @@ import Combine
 
 final class WebRemote: ObservableObject {
     static let shared = WebRemote()
-    static let port: UInt16 = 8848
+    /// 仅用于测试：DUIHUATAI_WEB_PORT 换个端口，避免和正在用的客户端抢
+    static let port: UInt16 = UInt16(ProcessInfo.processInfo.environment["DUIHUATAI_WEB_PORT"] ?? "") ?? 8848
     /// 外网访问的入口：只在本机 127.0.0.1 上，HTTPS，由 RelayClient 把云服务器转来的连接接到这里
     static let relayPort: UInt16 = 8849
 
@@ -279,6 +282,7 @@ final class WebRemote: ObservableObject {
         if r.path == "/api/theme" { DispatchQueue.main.async { let t = Self.theme(); self.queue.async { self.json(c, t) } }; return }
         guard let t = r.token, tokens.contains(t) else { json(c, ["error": "需要访问码"], status: "401 Unauthorized"); return }
         if r.path == "/api/events" { openStream(c); return }
+        if r.path == "/api/file" { DispatchQueue.global(qos: .userInitiated).async { self.serveFile(r, c) }; return }
         // 其余都在主线程读写客户端的数据
         DispatchQueue.main.async {
             let (status, obj) = self.handle(r)
@@ -460,13 +464,88 @@ final class WebRemote: ObservableObject {
             }
             if let r = it.resolved { o["resolved"] = r }
         case .artifacts:
-            o["files"] = it.artifacts.map { ["name": $0.url.lastPathComponent, "path": WeixinBridge.shortPath($0.url.path), "created": $0.created] }
+            o["files"] = it.artifacts.map { var f = fileJSON($0.url); f["created"] = $0.created; return f }
         case .user:
-            o["files"] = it.files.map { ["name": $0.lastPathComponent, "path": WeixinBridge.shortPath($0.path)] }
+            o["files"] = it.files.map(fileJSON)
             o["images"] = it.images.count
         default: break
         }
         return o
+    }
+
+    // MARK: 对话里的文件：网页上看卡片、预览、下载
+
+    /// 文件编号：路径的哈希（不把真实路径当参数传，网页只能拿对话里出现过的文件）
+    static func fileId(_ url: URL) -> String {
+        SHA256.hash(data: Data(url.standardizedFileURL.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func fileJSON(_ url: URL) -> [String: Any] {
+        let i = FileKind.info(url)
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        return ["id": fileId(url), "name": url.lastPathComponent, "path": WeixinBridge.shortPath(url.path), "ext": url.pathExtension.lowercased(),
+                "type": i.type, "size": FileKind.size(url) ?? "", "exists": exists && !isDir.boolValue, "view": previewKind(url)]
+    }
+
+    /// 网页里怎么预览：image / pdf / video / audio / html / markdown / text / none（只能下载）
+    static func previewKind(_ url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico": return "image"
+        case "svg": return "html"
+        case "pdf": return "pdf"
+        case "mp4", "mov", "m4v", "webm": return "video"
+        case "mp3", "wav", "m4a", "aac", "ogg", "flac": return "audio"
+        case "html", "htm": return "html"
+        case "md", "markdown": return "markdown"
+        case "txt", "log", "csv", "tsv", "json", "jsonl", "yaml", "yml", "xml", "toml", "ini", "conf", "sh", "zsh", "py", "js", "mjs", "ts", "tsx", "jsx",
+             "swift", "css", "scss", "java", "kt", "go", "rs", "c", "h", "cpp", "m", "rb", "php", "sql", "vue", "srt", "vtt": return "text"
+        default: return "none"
+        }
+    }
+
+    /// 这个对话里出现过的文件（产物卡片 + 你随消息附带的）
+    private static func files(in s: ChatSession) -> [URL] {
+        s.items.flatMap { it -> [URL] in it.kind == .artifacts ? it.artifacts.map(\.url) : (it.kind == .user ? it.files : []) }
+    }
+
+    /// GET /api/file?s=对话&f=文件编号[&dl=1]：支持分段读取（视频拖进度要用）
+    private func serveFile(_ r: Request, _ c: NWConnection) {
+        let sid = r.query["s"] ?? "", fid = r.query["f"] ?? ""
+        let url: URL? = DispatchQueue.main.sync {
+            guard let s = self.app?.openRemote(sid) else { return nil }
+            return Self.files(in: s).first { Self.fileId($0) == fid }
+        }
+        guard let url, let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
+              let fh = try? FileHandle(forReadingFrom: url) else {
+            json(c, ["error": "文件不在了"], status: "404 Not Found"); return
+        }
+        defer { try? fh.close() }
+        let view = Self.previewKind(url)
+        var mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        if view == "text" || view == "markdown" { mime = "text/plain; charset=utf-8" }
+        if url.pathExtension.lowercased() == "svg" { mime = "image/svg+xml" }
+        var extra = ["Accept-Ranges: bytes", "X-Content-Type-Options: nosniff"]
+        // Claude 生成的网页放进隔离沙箱：脚本照跑，但碰不到网页远程的登录状态和接口
+        if view == "html" { extra.append("Content-Security-Policy: sandbox allow-scripts allow-popups allow-forms allow-modals") }
+        if r.query["dl"] == "1" {
+            let enc = url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "file"
+            extra.append("Content-Disposition: attachment; filename*=UTF-8''\(enc)")
+        }
+        if let range = r.headers["range"], range.hasPrefix("bytes="), size > 0 {
+            let p = range.dropFirst(6).split(separator: "-", omittingEmptySubsequences: false)
+            var start = Int(p.first ?? "") ?? 0
+            var end = p.count > 1 ? (Int(p[1]) ?? size - 1) : size - 1
+            if p.first?.isEmpty == true { start = max(0, size - end); end = size - 1 }    // bytes=-500：最后 500 字节
+            end = min(end, size - 1, start + 8_000_000 - 1)                                 // 一次最多给 8MB
+            guard start <= end else { send(c, "416 Range Not Satisfiable", mime, Data(), extra: ["Content-Range: bytes */\(size)"]); return }
+            try? fh.seek(toOffset: UInt64(start))
+            let d = fh.readData(ofLength: end - start + 1)
+            send(c, "206 Partial Content", mime, d, extra: extra + ["Content-Range: bytes \(start)-\(end)/\(size)"])
+            return
+        }
+        guard size <= 300_000_000 else { json(c, ["error": "文件太大（超过 300MB），没法从网页打开"], status: "413 Payload Too Large"); return }
+        send(c, "200 OK", mime, fh.readDataToEndOfFile(), extra: extra)
     }
 
     /// 网页用和客户端一样的主题配色

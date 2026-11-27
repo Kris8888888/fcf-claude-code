@@ -72,6 +72,31 @@ header .ttl span{font-size:0.8rem;color:var(--muted)}
 .u .b{max-width:82%;background:color-mix(in srgb,var(--accent) 14%,var(--paper));border-radius:14px;padding:9px 14px;white-space:pre-wrap;word-break:break-word}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .chip{font-size:0.8rem;border:1px solid var(--line);border-radius:6px;padding:2px 8px;background:var(--paper);color:var(--muted)}
+/* 文件卡片：和客户端里的一样，左边色块写扩展名 */
+.files{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.u .files{justify-content:flex-end;margin-top:8px}
+.fc{display:flex;align-items:center;gap:10px;width:230px;max-width:100%;text-align:left;border:1px solid var(--line);background:var(--sunk);border-radius:12px;padding:8px 10px}
+.fc:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.fc.gone{opacity:.55;cursor:default}
+.fb{flex:none;width:34px;height:40px;border-radius:7px;background:var(--c,#7A8194);color:#fff;font-size:.62rem;font-weight:700;display:grid;place-items:center;letter-spacing:.02em;overflow:hidden}
+.fn{min-width:0;display:flex;flex-direction:column}
+.fn b{font-weight:500;font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fn small{color:var(--muted);font-size:.76rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.u .fc{background:var(--paper)}
+/* 预览层 */
+#pv{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:24px}
+#pv .w{width:min(1100px,100%);height:min(88vh,100%);background:var(--paper);border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
+#pv .h{display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-bottom:1px solid var(--line)}
+#pv .h .fn{flex:1}
+#pv .h a{text-decoration:none}
+#pv .c{flex:1;min-height:0;overflow:auto;background:var(--canvas);display:flex}
+#pv .c>*{margin:auto}
+#pv img,#pv video{max-width:100%;max-height:100%;display:block}
+#pv iframe{border:0;width:100%;height:100%;background:#fff}
+#pv .c>pre,#pv .c>.md{margin:0;max-height:none;width:100%;border:0;border-radius:0;background:var(--paper);padding:18px 22px;align-self:flex-start;min-height:100%}
+#pv .c>.md{max-width:none}
+#pv .none{color:var(--muted);text-align:center;padding:30px}
+@media (max-width:760px){#pv{padding:0}#pv .w{height:100%;border-radius:0}.fc{width:100%}}
 .rail{border-left:1.5px solid var(--line);padding:2px 0 2px 18px;margin-left:6px}
 .a{margin:6px 0 14px}
 .step{display:flex;gap:8px;align-items:baseline;color:var(--muted);font-size:0.9rem;padding:3px 0;cursor:pointer;user-select:none}
@@ -163,6 +188,12 @@ pre code{background:none;padding:0}
     </div>
   </main>
 </div>
+
+<div id="pv" class="hidden" role="dialog" aria-modal="true"><div class="w">
+  <div class="h"><span class="fb" id="pvB"></span><span class="fn"><b id="pvN"></b><small id="pvS"></small></span>
+    <a class="btn line" id="pvD" download>下载</a><button class="btn quiet" id="pvX" aria-label="关闭">✕</button></div>
+  <div class="c" id="pvC"></div>
+</div></div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -337,14 +368,15 @@ function renderSession(){
     i++;
     switch (it.kind){
       case 'user': {
-        const files = (it.files||[]).map(f=>`<span class="chip" title="${esc(f.path)}">📄 ${esc(f.name)}</span>`).join('') + (it.images ? `<span class="chip">🖼 ${it.images} 张图片</span>` : '');
-        h += `<div class="u"><div class="b">${esc(it.text)}${files?`<div class="chips">${files}</div>`:''}</div></div>`; break; }
+        const files = (it.files||[]).map(f=>fileCard(f)).join('');
+        const imgs = it.images ? `<div class="chips"><span class="chip">${it.images} 张图片</span></div>` : '';
+        h += `<div class="u"><div class="b">${esc(it.text)}${files?`<div class="files">${files}</div>`:''}${imgs}</div></div>`; break; }
       case 'assistant': h += `<div class="rail a"><div class="md">${md(it.text || (it.streaming?'…':''))}</div></div>`; break;
       case 'notice': h += `<div class="notice">${esc(it.text)}</div>`; break;
       case 'error': h += `<div class="rail"><div class="error">${esc(it.text)}</div></div>`; break;
       case 'local': h += `<div class="rail"><div class="card"><div class="md">${md(it.text)}</div></div></div>`; break;
       case 'login': h += `<div class="rail"><div class="card ask"><h4>电脑上的 Claude 登录已过期</h4><div class="done">需要在那台电脑上点「重新登录」，登录后刚才的消息会自动重发。</div></div></div>`; break;
-      case 'artifacts': h += `<div class="rail"><div class="chips">${(it.files||[]).map(f=>`<span class="chip" title="${esc(f.path)}">${f.created?'新建':'修改'} · ${esc(f.name)}</span>`).join('')}</div></div>`; break;
+      case 'artifacts': h += `<div class="rail"><div class="files">${(it.files||[]).map(f=>fileCard(f, f.created?'新建':'修改')).join('')}</div></div>`; break;
       case 'permission': h += permissionHTML(it); break;
       case 'question': h += questionHTML(it); break;
     }
@@ -354,6 +386,47 @@ function renderSession(){
   $('#items').innerHTML = h || '<div class="empty">还没有内容，发一条消息开始。</div>';
   const mb = $('#moreBtn'); if (mb) mb.onclick = () => { LIMIT += 200; loadSession(); };
 }
+
+// ---------- 文件：卡片 + 预览 ----------
+const FILES = {};
+const EXT_COLOR = {pdf:'#D64545',doc:'#2B5DB8',docx:'#2B5DB8',xls:'#1E8A4C',xlsx:'#1E8A4C',csv:'#1E8A4C',ppt:'#D0622B',pptx:'#D0622B',key:'#D0622B',
+  md:'#555B6E',txt:'#7A8194',html:'#E0752D',htm:'#E0752D',svg:'#E0A02D',zip:'#8A6D3B',json:'#6B5FB5',py:'#3572A5',js:'#C9A400',ts:'#3178C6',swift:'#F05138'};
+const VIEW_COLOR = {image:'#3A8FB7',video:'#8E44AD',audio:'#C2407A',text:'#5A6478',markdown:'#555B6E',pdf:'#D64545',html:'#E0752D'};
+function badge(f){ const e = (f.ext||'').slice(0,4).toUpperCase() || '文件'; return `<span class="fb" style="--c:${EXT_COLOR[f.ext]||VIEW_COLOR[f.view]||'#7A8194'}">${esc(e)}</span>`; }
+function fileCard(f, verb){
+  FILES[f.id] = f;
+  const meta = f.exists ? [verb, f.type, f.size].filter(Boolean).join(' · ') : '文件已不在了';
+  return `<button class="fc ${f.exists?'':'gone'}" data-file="${f.id}" title="${esc(f.path)}" ${f.exists?'':'disabled'}>${badge(f)}<span class="fn"><b>${esc(f.name)}</b><small>${esc(meta)}</small></span></button>`;
+}
+function fileURL(f, dl){ return '/api/file?s=' + encodeURIComponent(CUR) + '&f=' + f.id + (dl ? '&dl=1' : ''); }
+async function openFile(f){
+  $('#pvB').outerHTML = badge(f).replace('class="fb"', 'class="fb" id="pvB"');
+  $('#pvN').textContent = f.name; $('#pvS').textContent = [f.type, f.size].filter(Boolean).join(' · ');
+  $('#pvD').href = fileURL(f, true);
+  const c = $('#pvC'), u = fileURL(f);
+  c.innerHTML = '';
+  $('#pv').classList.remove('hidden');
+  switch (f.view){
+    case 'image': c.innerHTML = `<img src="${u}" alt="${esc(f.name)}">`; break;
+    case 'video': c.innerHTML = `<video src="${u}" controls playsinline></video>`; break;
+    case 'audio': c.innerHTML = `<audio src="${u}" controls></audio>`; break;
+    case 'pdf': case 'html': c.innerHTML = `<iframe src="${u}" title="${esc(f.name)}"></iframe>`; break;
+    case 'text': case 'markdown': {
+      c.innerHTML = '<div class="none">正在打开…</div>';
+      try {
+        const r = await fetch(u, {credentials:'same-origin'}); if (!r.ok) throw new Error((await r.json().catch(()=>({}))).error || ('打不开：' + r.status));
+        let t = await r.text(); const cut = t.length > 400000; if (cut) t = t.slice(0, 400000);
+        c.innerHTML = f.view === 'markdown' ? `<div class="md">${md(t)}</div>` : `<pre>${esc(t)}${cut?'\n\n……文件太长，后面的内容请下载查看':''}</pre>`;
+      } catch(e){ c.innerHTML = `<div class="none">${esc(e.message)}</div>`; }
+      break; }
+    default: c.innerHTML = `<div class="none">这种文件网页里看不了，点右上角「下载」用本机软件打开。</div>`;
+  }
+  $('#pvX').focus();
+}
+function closeFile(){ $('#pv').classList.add('hidden'); $('#pvC').innerHTML = ''; }
+$('#pvX').onclick = closeFile;
+$('#pv').onclick = e => { if (e.target.id === 'pv') closeFile(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#pv').classList.contains('hidden')) closeFile(); });
 
 function permissionHTML(it){
   const isPlan = it.tool === 'ExitPlanMode';
@@ -382,6 +455,8 @@ function questionHTML(it){
 }
 
 $('#items').onclick = async e => {
+  const fc = e.target.closest('[data-file]');
+  if (fc){ const f = FILES[fc.dataset.file]; if (f && f.exists) openFile(f); return; }
   const t = e.target.closest('[data-toggle]');
   if (t){ const id = t.dataset.toggle; OPEN.has(id) ? OPEN.delete(id) : OPEN.add(id); renderSession(); return; }
   const o = e.target.closest('.opt');
