@@ -15,7 +15,7 @@ final class WebRemote: ObservableObject {
     /// 仅用于测试：DUIHUATAI_WEB_PORT 换个端口，避免和正在用的客户端抢
     static let port: UInt16 = UInt16(ProcessInfo.processInfo.environment["DUIHUATAI_WEB_PORT"] ?? "") ?? 8848
     /// 外网访问的入口：只在本机 127.0.0.1 上，HTTPS，由 RelayClient 把云服务器转来的连接接到这里
-    static let relayPort: UInt16 = 8849
+    static let relayPort: UInt16 = UInt16(ProcessInfo.processInfo.environment["DUIHUATAI_RELAY_PORT"] ?? "") ?? 8849
 
     @Published private(set) var running = false
     @Published private(set) var clients = 0          // 正在看的浏览器数
@@ -151,7 +151,10 @@ final class WebRemote: ObservableObject {
         var headers: [String: String] = [:]
         var body = Data()
         var json: [String: Any] { (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:] }
+        /// 登录凭据：优先 cookie；有的手机浏览器在自签证书的网站上不存 cookie，所以也认请求头 / 参数 t
         var token: String? {
+            if let h = headers["x-fcf-token"], !h.isEmpty { return h }
+            if let q = query["t"], !q.isEmpty { return q }
             for part in (headers["cookie"] ?? "").split(separator: ";") {
                 let kv = part.trimmingCharacters(in: .whitespaces).split(separator: "=", maxSplits: 1)
                 if kv.count == 2, kv[0] == "fcfrc" { return String(kv[1]) }
@@ -208,9 +211,14 @@ final class WebRemote: ObservableObject {
     private func relayGate(_ r: Request, _ c: NWConnection) -> Bool {
         let secret = RelayClient.shared.secret
         let pass = RelayClient.hmac(secret, "gate")
-        if let k = r.query["k"], k == secret {
-            send(c, "302 Found", "text/plain", Data(), extra: ["Location: /", "Set-Cookie: fcfgate=\(pass); Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000"])
-            return false
+        // 网址口令：带在网址参数或请求头里都认（页面会给每个请求带上，不依赖 cookie）
+        if let k = r.query["k"] ?? r.headers["x-fcf-gate"], k == secret {
+            if r.path == "/" || r.path == "/index.html" {
+                send(c, "200 OK", "text/html; charset=utf-8", Data(WebRemotePage.html.utf8),
+                     extra: ["Set-Cookie: fcfgate=\(pass); Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000", "Referrer-Policy: no-referrer"])
+                return false
+            }
+            return true
         }
         for part in (r.headers["cookie"] ?? "").split(separator: ";") {
             let kv = part.trimmingCharacters(in: .whitespaces).split(separator: "=", maxSplits: 1)
@@ -309,7 +317,7 @@ final class WebRemote: ObservableObject {
         tokens.insert(t)
         let viaRelay = Self.isRelay(c)
         DispatchQueue.main.async { self.noteLogin(t, viaRelay: viaRelay, from: who) }
-        json(c, ["ok": true], extra: ["Set-Cookie: fcfrc=\(t); Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000"])
+        json(c, ["ok": true, "token": t], extra: ["Set-Cookie: fcfrc=\(t); Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"])
     }
 
     // MARK: 实时推送（Server-Sent Events）

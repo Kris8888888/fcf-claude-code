@@ -197,11 +197,19 @@ pre code{background:none;padding:0}
 
 <script>
 const $ = s => document.querySelector(s);
+// 外网访问：网址里的口令（k）和登录凭据记在这台设备上，每个请求都带上——有的手机浏览器在自签证书的网站上不存 cookie
+const QS = new URLSearchParams(location.search);
+let GATE = QS.get('k') || sessionStorage.getItem('fcfk') || localStorage.getItem('fcfk') || '';
+let TOKEN = localStorage.getItem('fcft') || '';
+// 网址里的口令保留：不存 cookie 的浏览器刷新页面时还要靠它
+if (QS.get('k')) { try { localStorage.setItem('fcfk', GATE); } catch(_){} }
+function U(path){ const p = []; if (GATE) p.push('k=' + encodeURIComponent(GATE)); if (TOKEN) p.push('t=' + encodeURIComponent(TOKEN)); return p.length ? path + (path.includes('?') ? '&' : '?') + p.join('&') : path; }
+function H(extra){ const h = Object.assign({}, extra || {}); if (GATE) h['X-FCF-Gate'] = GATE; if (TOKEN) h['X-FCF-Token'] = TOKEN; return h; }
 let LIST = null, CUR = null, SNAP = null, OPEN = new Set(), PICKS = {}, ES = null, loadingSess = false, pendingSess = false;
 
 async function api(path, body){
-  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), credentials:'same-origin'} : {credentials:'same-origin'});
-  if (r.status === 401) { showLogin(); throw new Error('401'); }
+  const r = await fetch(path, body ? {method:'POST', headers:H({'Content-Type':'application/json'}), body:JSON.stringify(body), credentials:'same-origin'} : {headers:H(), credentials:'same-origin'});
+  if (r.status === 401) { TOKEN = ''; try { localStorage.removeItem('fcft'); } catch(_){} showLogin(); throw new Error('401'); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || ('出错了：' + r.status));
   return j;
@@ -217,7 +225,7 @@ function applySize(){ const v = curSize(); document.documentElement.style.setPro
 function nextSize(){ const i = SIZES.findIndex(x=>x[1]===curSize()); try { localStorage.setItem('fcfrc-size', SIZES[(i+1)%SIZES.length][1]); } catch(_){} applySize(); }
 async function applyTheme(){
   try{
-    const t = await (await fetch('/api/theme', {credentials:'same-origin'})).json();
+    const t = await (await fetch('/api/theme', {headers:H(), credentials:'same-origin'})).json();
     const dark = t.scheme === 'dark' || (t.scheme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
     const p = dark ? t.dark : t.light, r = document.documentElement.style;
     for (const k in p) r.setProperty('--' + k, p[k]);
@@ -232,9 +240,10 @@ function showLogin(){ $('#app').classList.add('hidden'); $('#login').classList.r
 $('#loginForm').onsubmit = async e => {
   e.preventDefault(); $('#loginErr').textContent = '';
   try {
-    const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code:$('#code').value}), credentials:'same-origin'});
+    const r = await fetch('/api/login', {method:'POST', headers:H({'Content-Type':'application/json'}), body:JSON.stringify({code:$('#code').value}), credentials:'same-origin'});
     const j = await r.json().catch(()=>({}));
     if (!r.ok) { $('#loginErr').textContent = j.error || '进不去，请再试一次'; return; }
+    if (j.token) { TOKEN = j.token; try { localStorage.setItem('fcft', TOKEN); } catch(_){} }
     $('#code').value = ''; start();
   } catch(err){ $('#loginErr').textContent = '连不上这台电脑：' + err.message; }
 };
@@ -242,7 +251,7 @@ $('#loginForm').onsubmit = async e => {
 // ---------- 实时推送 ----------
 function connect(){
   if (ES) ES.close();
-  ES = new EventSource('/api/events');
+  ES = new EventSource(U('/api/events'));
   ES.addEventListener('hello', () => setLink(true));
   ES.addEventListener('list', () => loadList());
   ES.addEventListener('session', e => { try { if (JSON.parse(e.data).id === CUR) loadSession(); } catch(_){} });
@@ -398,7 +407,7 @@ function fileCard(f, verb){
   const meta = f.exists ? [verb, f.type, f.size].filter(Boolean).join(' · ') : '文件已不在了';
   return `<button class="fc ${f.exists?'':'gone'}" data-file="${f.id}" title="${esc(f.path)}" ${f.exists?'':'disabled'}>${badge(f)}<span class="fn"><b>${esc(f.name)}</b><small>${esc(meta)}</small></span></button>`;
 }
-function fileURL(f, dl){ return '/api/file?s=' + encodeURIComponent(CUR) + '&f=' + f.id + (dl ? '&dl=1' : ''); }
+function fileURL(f, dl){ return U('/api/file?s=' + encodeURIComponent(CUR) + '&f=' + f.id + (dl ? '&dl=1' : '')); }
 async function openFile(f){
   $('#pvB').outerHTML = badge(f).replace('class="fb"', 'class="fb" id="pvB"');
   $('#pvN').textContent = f.name; $('#pvS').textContent = [f.type, f.size].filter(Boolean).join(' · ');
