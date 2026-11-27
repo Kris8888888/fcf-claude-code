@@ -213,29 +213,20 @@ final class ProviderStore: ObservableObject {
         return (n, n == 0 ? "CC Switch 里没有新的可导入服务商（官方的不需要导）" : "从 CC Switch 导入了 \(n) 个")
     }
 
-    // MARK: Key 存钥匙串
+    // MARK: Key 存本机文件（见 SecretStore）
 
     private static let service = "com.likang.duihuatai.provider"
 
     func key(for id: String) -> String? {
         if testMode { return ProcessInfo.processInfo.environment["DUIHUATAI_TEST_KEY"] }
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
-                                kSecAttrAccount as String: id, kSecReturnData as String: true]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        return SecretStore.get(Self.service, id)
     }
 
     func setKey(_ key: String, for id: String) {
-        deleteKey(id)
-        guard !key.isEmpty else { return }
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
-                                kSecAttrAccount as String: id, kSecValueData as String: Data(key.utf8)]
-        SecItemAdd(q as CFDictionary, nil)
+        SecretStore.set(Self.service, id, key)
     }
 
     private func deleteKey(_ id: String) {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service, kSecAttrAccount as String: id]
-        SecItemDelete(q as CFDictionary)
+        SecretStore.set(Self.service, id, nil)
     }
 }

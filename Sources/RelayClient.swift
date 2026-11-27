@@ -266,18 +266,11 @@ final class RelayClient: ObservableObject {
         : ["token": ProcessInfo.processInfo.environment["DUIHUATAI_TEST_RELAY_TOKEN"] ?? "test-token", "secret": "test-secret"]
     static func keychain(_ account: String) -> String? {
         if let t = testStore { return t[account] }
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecReturnData as String: true]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        return SecretStore.get(service, account)
     }
     static func setKeychain(_ account: String, _ value: String) {
         if testStore != nil { testStore?[account] = value; return }
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        var add = base; add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
+        SecretStore.set(service, account, value)
     }
 
     /// 服务器上要执行的安装命令（带上口令）：贴到阿里云控制台「命令助手」里运行
@@ -288,8 +281,13 @@ final class RelayClient: ObservableObject {
 enum RelayTLS {
     private static let pass = "fcf-relay"
     static var dir: URL {
-        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("com.likang.duihuatai/relay", isDirectory: true)
+        // 仅用于测试：DUIHUATAI_TEST_RELAY 时证书放临时目录，不动真实的
+        let d = ProcessInfo.processInfo.environment["DUIHUATAI_TEST_RELAY"] != nil
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("duihuatai-test-relay", isDirectory: true)
+            : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("com.likang.duihuatai/relay", isDirectory: true)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        // 里面有证书私钥：只有自己能进
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: d.path)
         return d
     }
 
@@ -315,7 +313,10 @@ enum RelayTLS {
         }
         guard let data = try? Data(contentsOf: p12) else { return nil }
         var items: CFArray?
-        let st = SecPKCS12Import(data as CFData, [kSecImportExportPassphrase as String: pass] as CFDictionary, &items)
+        // 只放内存，不导进钥匙串：导进去的话每个新版本用这把私钥都会弹「想要使用钥匙串中的密钥」
+        var opts: [String: Any] = [kSecImportExportPassphrase as String: pass]
+        if #available(macOS 15.0, *) { opts[kSecImportToMemoryOnly as String] = true }
+        let st = SecPKCS12Import(data as CFData, opts as CFDictionary, &items)
         guard st == errSecSuccess, let arr = items as? [[String: Any]], let first = arr.first,
               let idRef = first[kSecImportItemIdentity as String] else { AppLog.write("读取证书失败：\(st)"); return nil }
         return sec_identity_create(idRef as! SecIdentity)
