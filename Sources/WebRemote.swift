@@ -11,6 +11,8 @@ import Combine
 final class WebRemote: ObservableObject {
     static let shared = WebRemote()
     static let port: UInt16 = 8848
+    /// 外网访问的入口：只在本机 127.0.0.1 上，HTTPS，由 RelayClient 把云服务器转来的连接接到这里
+    static let relayPort: UInt16 = 8849
 
     @Published private(set) var running = false
     @Published private(set) var clients = 0          // 正在看的浏览器数
@@ -26,6 +28,7 @@ final class WebRemote: ObservableObject {
     private var pollTimer: Timer?
     private var lastSigs: [String: Int] = [:]
     private var lastListSig = 0
+    private var relayListener: NWListener?
 
     var enabled: Bool { UserDefaults.standard.bool(forKey: "webRemoteOn") }
 
@@ -47,6 +50,7 @@ final class WebRemote: ObservableObject {
     func setEnabled(_ on: Bool) {
         UserDefaults.standard.set(on, forKey: "webRemoteOn")
         on ? start() : stop()
+        if !on && RelayClient.shared.enabled { RelayClient.shared.setEnabled(false) }   // 网页远程关了，外网入口也一起关
     }
 
     func startIfEnabled() { if enabled { start() } }
@@ -134,9 +138,58 @@ final class WebRemote: ObservableObject {
         var remote = ""
     }
 
-    private func accept(_ c: NWConnection) {
+    private func accept(_ c: NWConnection, relay: Bool = false) {
         c.start(queue: queue)
         read(c, Data())
+    }
+
+    // MARK: 外网入口（经云服务器）
+
+    func startRelayEntrance() {
+        guard relayListener == nil else { return }
+        guard let identity = RelayTLS.identity() else { error = "外网访问：生成加密证书失败"; return }
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_set_local_identity(tls.securityProtocolOptions, identity)
+        let params = NWParameters(tls: tls, tcp: .init())
+        params.allowLocalEndpointReuse = true
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: Self.relayPort)!)
+        do {
+            let l = try NWListener(using: params)
+            l.newConnectionHandler = { [weak self] c in self?.accept(c, relay: true) }
+            l.stateUpdateHandler = { [weak self] st in
+                if case .failed(let e) = st { DispatchQueue.main.async { self?.error = "外网入口启动失败：\(e.localizedDescription)"; self?.relayListener = nil } }
+            }
+            l.start(queue: queue)
+            relayListener = l
+        } catch {
+            self.error = "外网入口启动失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 是不是从外网入口（本机 8849）进来的连接
+    private static func isRelay(_ c: NWConnection) -> Bool {
+        if case .hostPort(_, let port)? = c.currentPath?.localEndpoint { return port.rawValue == relayPort }
+        return false
+    }
+
+    func stopRelayEntrance() {
+        relayListener?.cancel(); relayListener = nil
+    }
+
+    /// 外网来的访问先过「网址口令」：地址里 k 对了就发一张通行 cookie；没有就回 404，看起来像这里什么都没有
+    private func relayGate(_ r: Request, _ c: NWConnection) -> Bool {
+        let secret = RelayClient.shared.secret
+        let pass = RelayClient.hmac(secret, "gate")
+        if let k = r.query["k"], k == secret {
+            send(c, "302 Found", "text/plain", Data(), extra: ["Location: /", "Set-Cookie: fcfgate=\(pass); Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000"])
+            return false
+        }
+        for part in (r.headers["cookie"] ?? "").split(separator: ";") {
+            let kv = part.trimmingCharacters(in: .whitespaces).split(separator: "=", maxSplits: 1)
+            if kv.count == 2, kv[0] == "fcfgate", kv[1] == pass { return true }
+        }
+        send(c, "404 Not Found", "text/plain", Data("Not Found".utf8))
+        return false
     }
 
     private func read(_ c: NWConnection, _ acc: Data) {
@@ -189,6 +242,7 @@ final class WebRemote: ObservableObject {
     }
 
     private func route(_ r: Request, _ c: NWConnection) {
+        if Self.isRelay(c), !relayGate(r, c) { return }
         if r.method == "GET" && (r.path == "/" || r.path == "/index.html") {
             send(c, "200 OK", "text/html; charset=utf-8", Data(WebRemotePage.html.utf8)); return
         }

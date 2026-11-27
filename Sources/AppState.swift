@@ -108,6 +108,8 @@ final class AppState: ObservableObject {
         // 网页远程：开启过就自动开始
         WebRemote.shared.app = self
         WebRemote.shared.startIfEnabled()
+        // 外网访问：开启过就自动连云服务器
+        RelayClient.shared.startIfEnabled()
         // 仅用于测试：DUIHUATAI_OPEN_SESSION=会话 ID，启动后直接打开那个历史对话
         if let id = ProcessInfo.processInfo.environment["DUIHUATAI_OPEN_SESSION"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
